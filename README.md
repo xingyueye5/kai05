@@ -1,3 +1,21 @@
+# Installation of pytorch kai05-VLA@Lirui
+
+When cloning this repo, make sure to update submodules:
+
+```bash
+git clone --recurse-submodules https://github.com/Lirui-Zhao/Kai05-VLA.git
+```
+
+We use [uv](https://docs.astral.sh/uv/) to manage Python dependencies.
+
+```bash
+pip install uv
+GIT_LFS_SKIP_SMUDGE=1 uv sync
+GIT_LFS_SKIP_SMUDGE=1 uv pip install -e .
+
+cp -r ./src/openpi/models_pytorch/transformers_replace/* .venv/lib/python3.11/site-packages/transformers/
+```
+
 # openpi
 
 openpi holds open-source models and packages for robotics, published by the [Physical Intelligence team](https://www.physicalintelligence.company/).
