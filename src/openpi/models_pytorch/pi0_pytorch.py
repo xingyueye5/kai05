@@ -8,9 +8,8 @@ import torch.nn.functional as F  # noqa: N812
 
 import openpi.models.gemma as _gemma
 from openpi.models_pytorch.gemma_pytorch import PaliGemmaWithExpertModel
-import openpi.models_pytorch.preprocessing_pytorch as _preprocessing
 from openpi.models_pytorch.model_registry import register_pytorch_model
-
+import openpi.models_pytorch.preprocessing_pytorch as _preprocessing
 
 # =============================================================================
 # Helper Functions
@@ -86,42 +85,43 @@ def make_att_2d_masks(pad_masks, att_masks):
     pad_2d_masks = pad_masks[:, None, :] * pad_masks[:, :, None]
     return att_2d_masks & pad_2d_masks
 
+
 def get_1d_sincos_pos_embed_from_grid(pos: torch.Tensor, embed_dim: int) -> torch.Tensor:
     """
     Generates 1D sinusoidal positional embeddings in PyTorch.
 
     Args:
         embed_dim: Output dimension (D) for each position. Must be even.
-        pos: A list or tensor of positions (M,) to be encoded. 
+        pos: A list or tensor of positions (M,) to be encoded.
              If passed as a numpy array, PyTorch will convert it to a tensor.
 
     Returns:
         A tensor of shape (M, D) containing the positional embeddings.
     """
-    
+
     # 1. Input assertion and dimension setup
     assert embed_dim % 2 == 0, "Embedding dimension must be an even number."
-    
+
     # Ensure pos is a tensor and flatten it
     if isinstance(pos, torch.Tensor):
         pos = pos.flatten()
     else:
         # Assuming input is convertible (e.g., numpy array or list)
         pos = torch.as_tensor(pos, dtype=torch.float32).flatten()
-        
+
     # M = pos.shape[0]  # Number of positions
-    D_half = embed_dim // 2 # D/2
-    
+    D_half = embed_dim // 2  # D/2
+
     # 2. Calculate omega (frequencies)
     # The original implementation uses 10000 as the base constant
-    
+
     # Calculate indices for D/2 dimensions: 0, 1, 2, ..., D/2 - 1
     # Use torch.float32 (standard)
     omega = torch.arange(D_half, dtype=torch.float32).to(pos)
-    
+
     # Apply the division: i / (D/2)
     omega = omega / D_half
-    
+
     # Apply the base power: 1 / 10000^(i / (D/2))
     # torch.pow is safer than ** for tensors, or 10000.0 ** omega
     omega = 1.0 / torch.pow(10000.0, omega)  # (D/2,)
@@ -130,19 +130,20 @@ def get_1d_sincos_pos_embed_from_grid(pos: torch.Tensor, embed_dim: int) -> torc
     # The einsum "m,d->md" is equivalent to multiplying (M, 1) by (1, D/2)
     # which uses broadcasting, or using torch.einsum directly.
     # out = torch.einsum("m,d->md", pos, omega)
-    
+
     # Using broadcasting for better performance/readability in PyTorch
     # pos shape: (M, 1), omega shape: (1, D/2) -> out shape: (M, D/2)
-    out = pos.unsqueeze(1) * omega.unsqueeze(0)  
+    out = pos.unsqueeze(1) * omega.unsqueeze(0)
 
     # 4. Calculate sine and cosine components
     emb_sin = torch.sin(out)  # (M, D/2)
     emb_cos = torch.cos(out)  # (M, D/2)
 
     # 5. Concatenate to get final embedding (M, D)
-    emb = torch.cat([emb_sin, emb_cos], dim=1) 
-    
+    emb = torch.cat([emb_sin, emb_cos], dim=1)
+
     return emb
+
 
 @register_pytorch_model()
 class PI0Pytorch(nn.Module):
@@ -543,7 +544,6 @@ class PI0Pytorch_Custom(PI0Pytorch):
             assert not self.loss_value_use_bce, "Cannot use BCE loss with timestep difference mode, \
                                                 since the output range is [-1, 1] instead of [0, 1]."
 
-
         # Value head is a 3-layer MLP that takes the last-layer representation of the suffix tokens and outputs a single value
         action_expert_config = _gemma.get_config(config.action_expert_variant)
         if self.with_value_head:
@@ -563,25 +563,24 @@ class PI0Pytorch_Custom(PI0Pytorch):
 
             self.value_head = nn.Sequential(*mlp_layers)
 
-
     def _preprocess_observation(self, observation, *, train=True, return_full_obs=False):
         """Helper method to preprocess observation."""
-        observation = _preprocessing.preprocess_observation_pytorch_custom(observation, train=train, return_full_obs=return_full_obs,
-                                                                    apply_aug=False)  # ! Changed: Not applying aug for policy and reward model training.
+        observation = _preprocessing.preprocess_observation_pytorch_custom(
+            observation, train=train, return_full_obs=return_full_obs, apply_aug=False
+        )  # ! Changed: Not applying aug for policy and reward model training.
 
         full_obs = (
-                list(observation.images.values()),
-                list(observation.image_masks.values()),
-                observation.tokenized_prompt,
-                observation.tokenized_prompt_mask,
-                observation.state,
-                observation, # Pass the whole observation object for value target calculation
-            )
+            list(observation.images.values()),
+            list(observation.image_masks.values()),
+            observation.tokenized_prompt,
+            observation.tokenized_prompt_mask,
+            observation.state,
+            observation,  # Pass the whole observation object for value target calculation
+        )
         return full_obs if return_full_obs else full_obs[:-1]
 
     def embed_prefix(
-        self, images, img_masks, lang_tokens, lang_masks,
-        action_advantage=None
+        self, images, img_masks, lang_tokens, lang_masks, action_advantage=None
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Embed images with SigLIP and language tokens with embedding layer to prepare
         for PaliGemma transformer processing.
@@ -617,14 +616,17 @@ class PI0Pytorch_Custom(PI0Pytorch):
         # print("action_advantage in embed_prefix:", action_advantage)
 
         if action_advantage is not None:
-
-            action_advantage = get_1d_sincos_pos_embed_from_grid(action_advantage, lang_emb.shape[-1]).to(lang_emb.device)
+            action_advantage = get_1d_sincos_pos_embed_from_grid(action_advantage, lang_emb.shape[-1]).to(
+                lang_emb.device
+            )
             action_advantage = action_advantage.unsqueeze(1)  # * [bs, 1, 2048]
             lang_emb = torch.cat([lang_emb, action_advantage], dim=1)  # * [bs, 201, 2048]
 
             # * lang_mask
-            lang_masks = torch.cat([lang_masks, torch.ones((lang_masks.shape[0], 1)).to(lang_masks)], dim=1)  # * [bs, 201]
-        
+            lang_masks = torch.cat(
+                [lang_masks, torch.ones((lang_masks.shape[0], 1)).to(lang_masks)], dim=1
+            )  # * [bs, 201]
+
         embs.append(lang_emb)
         pad_masks.append(lang_masks)
 
@@ -655,7 +657,7 @@ class PI0Pytorch_Custom(PI0Pytorch):
                 mask = torch.bernoulli(torch.full((state.shape[0],), self.p_mask_ego_state, device=state.device)).bool()
                 state[mask] = 0.0
             # --- End of Modifications ---
-                
+
             if self.state_proj.weight.dtype == torch.float32:
                 state = state.to(torch.float32)
 
@@ -732,7 +734,9 @@ class PI0Pytorch_Custom(PI0Pytorch):
         """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
 
         # print("observation.action_advantage_original:", observation.action_advantage_original)
-        images, img_masks, lang_tokens, lang_masks, state, obs_full = self._preprocess_observation(observation, train=self.training, return_full_obs=True)
+        images, img_masks, lang_tokens, lang_masks, state, obs_full = self._preprocess_observation(
+            observation, train=self.training, return_full_obs=True
+        )
 
         if noise is None:
             noise = self.sample_noise(actions.shape, actions.device)
@@ -741,7 +745,7 @@ class PI0Pytorch_Custom(PI0Pytorch):
             time = self.sample_time(actions.shape[0], actions.device)
 
         time_expanded = time[:, None, None]
-        
+
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
 
@@ -750,9 +754,10 @@ class PI0Pytorch_Custom(PI0Pytorch):
         else:
             action_advantage = getattr(obs_full, "action_advantage", None)
 
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, lang_tokens, lang_masks, 
-                                                                            action_advantage=action_advantage)  # * custom
-        
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+            images, img_masks, lang_tokens, lang_masks, action_advantage=action_advantage
+        )  # * custom
+
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(state, x_t, time)
         if (
             self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
@@ -782,7 +787,6 @@ class PI0Pytorch_Custom(PI0Pytorch):
             )
             return suffix_out
 
-
         suffix_out_full = self._apply_checkpoint(
             forward_func, prefix_embs, suffix_embs, att_2d_masks_4d, position_ids, adarms_cond
         )
@@ -799,7 +803,7 @@ class PI0Pytorch_Custom(PI0Pytorch):
         # --- Start of Modifications ---
 
         # Calculate action loss, taking the mean over the action dimension to match JAX implementation
-        loss_action = F.mse_loss(u_t, v_t, reduction="none").mean(dim=-1) # Shape: (B, AH)
+        loss_action = F.mse_loss(u_t, v_t, reduction="none").mean(dim=-1)  # Shape: (B, AH)
         loss = loss_action * self.loss_action_weight
 
         loss_aux_dict = {}
@@ -807,15 +811,15 @@ class PI0Pytorch_Custom(PI0Pytorch):
         if self.with_value_head:
             # Get the state token's final representation
             deep_rep = suffix_out_full[:, 0, :].to(dtype=torch.float32)
-            value_pred = self.value_head(deep_rep) # Shape: (B, 1)
-            
+            value_pred = self.value_head(deep_rep)  # Shape: (B, 1)
+
             # Prepare value target (episode progress)
-            # tgt_frame_index = obs_full.frame_index.float() 
-            
+            # tgt_frame_index = obs_full.frame_index.float()
+
             # episode_length = obs_full.episode_length.float()
             # # Avoid division by zero for episodes of length 0
             # episode_length = torch.where(episode_length > 0, episode_length, torch.ones_like(episode_length))
-            
+
             # if not self.timestep_difference_mode:
             #     progress_tgt = torch.clamp(tgt_frame_index / episode_length, 0.0, 1.0)
             # else:
@@ -824,14 +828,14 @@ class PI0Pytorch_Custom(PI0Pytorch):
                 progress_tgt = torch.clamp(obs_full.progress.float(), -1.0, 1.0)
             else:
                 progress_tgt = torch.clamp(obs_full.progress.float(), 0.0, 1.0)
-            progress_tgt = progress_tgt.unsqueeze(1) # Shape: (B, 1)
+            progress_tgt = progress_tgt.unsqueeze(1)  # Shape: (B, 1)
 
             # Calculate value loss
             if self.loss_value_use_bce:
                 value_loss = F.binary_cross_entropy_with_logits(value_pred, progress_tgt, reduction="none")
             else:
                 value_loss = F.mse_loss(value_pred, progress_tgt, reduction="none")
-            
+
             # Weight the value loss
             value_loss = value_loss.to(loss.dtype) * self.loss_value_weight
 
@@ -849,9 +853,14 @@ class PI0Pytorch_Custom(PI0Pytorch):
         # --- End of Modifications ---
 
     @torch.no_grad()
-    def sample_actions(self, device, observation, noise=None, num_steps=10, 
-                    #    cfg_scale=1.
-                       ) -> Tensor:
+    def sample_actions(
+        self,
+        device,
+        observation,
+        noise=None,
+        num_steps=10,
+        #    cfg_scale=1.
+    ) -> Tensor:
         """Do a full inference forward and compute the action (batch_size x num_steps x num_motors)"""
 
         # TODO: batch: first half is conditional, second half is unconditional
@@ -860,7 +869,7 @@ class PI0Pytorch_Custom(PI0Pytorch):
         cfg_scale = self.cfg_scale
 
         if cfg_scale > 1:
-            assert bsize % 2 == 0, "Batch size must be even when using CFG." 
+            assert bsize % 2 == 0, "Batch size must be even when using CFG."
             cfg_bsize = bsize // 2
 
         def expand_batch(tensor):
@@ -871,11 +880,11 @@ class PI0Pytorch_Custom(PI0Pytorch):
             # Handle Observation object fields (only those needed for embedding)
             return torch.cat([tensor, tensor], dim=0)
 
-        if cfg_scale == 1.:
+        if cfg_scale == 1.0:
             if noise is None:
                 actions_shape = (bsize, self.config.action_horizon, self.config.action_dim)
                 noise = self.sample_noise(actions_shape, device)
-        elif cfg_scale > 1.:
+        elif cfg_scale > 1.0:
             if noise is None:
                 actions_shape = (cfg_bsize, self.config.action_horizon, self.config.action_dim)
                 noise = self.sample_noise(actions_shape, device)
@@ -892,9 +901,9 @@ class PI0Pytorch_Custom(PI0Pytorch):
 
         action_advantage = getattr(observation, "action_advantage", None)
 
-        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, lang_tokens, lang_masks,
-                                                                            
-                                                                            action_advantage=action_advantage)
+        prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(
+            images, img_masks, lang_tokens, lang_masks, action_advantage=action_advantage
+        )
         prefix_att_2d_masks = make_att_2d_masks(prefix_pad_masks, prefix_att_masks)
         prefix_position_ids = torch.cumsum(prefix_pad_masks, dim=1) - 1
 
@@ -918,7 +927,7 @@ class PI0Pytorch_Custom(PI0Pytorch):
         while time >= -dt / 2:
             expanded_time = time.expand(bsize)
 
-            if cfg_scale == 1.:
+            if cfg_scale == 1.0:
                 # * NO CFG
                 v_t = self.denoise_step(
                     state,
@@ -930,7 +939,7 @@ class PI0Pytorch_Custom(PI0Pytorch):
 
                 # Euler step - use new tensor assignment instead of in-place operation
                 x_t = x_t + dt * v_t
-            elif cfg_scale > 1.:
+            elif cfg_scale > 1.0:
                 # * CFG
                 v_t_full = self.denoise_step(
                     state,
@@ -949,11 +958,11 @@ class PI0Pytorch_Custom(PI0Pytorch):
                 # breakpoint
 
                 v_t = v_t_cond + ((self.cfg_scale - 1) * (v_t_cond - v_t_uncond))
-                
+
                 x_t_cond = x_t[:cfg_bsize]
                 x_t_cond = x_t_cond + dt * v_t
                 x_t = expand_batch(x_t_cond)  # * repeat to next iter.
-                
+
                 # print("x_t.shape:", x_t.shape)
                 # print("x_t_cond.shape:", x_t_cond.shape)
                 # raise NotImplementedError
@@ -963,10 +972,10 @@ class PI0Pytorch_Custom(PI0Pytorch):
 
             time += dt
 
-        if cfg_scale > 1.:
+        if cfg_scale > 1.0:
             # * return action only by removing uncond part.
             x_t = x_t[:cfg_bsize]
-        
+
         return x_t
 
     @torch.no_grad()
@@ -976,7 +985,7 @@ class PI0Pytorch_Custom(PI0Pytorch):
 
         bsize = state.shape[0]
         actions_shape = (bsize, self.config.action_horizon, self.config.action_dim)
-        
+
         # We need a dummy action and time for the suffix embedding, similar to the training forward pass
         noise_action = self.sample_noise(actions_shape, device)
         time = self.sample_time(bsize, device)
@@ -986,14 +995,14 @@ class PI0Pytorch_Custom(PI0Pytorch):
         # Embed prefix (images, language) and suffix (state, noisy actions, time)
         prefix_embs, prefix_pad_masks, prefix_att_masks = self.embed_prefix(images, img_masks, lang_tokens, lang_masks)
         suffix_embs, suffix_pad_masks, suffix_att_masks, adarms_cond = self.embed_suffix(state, noise_action, time)
-        
+
         if (
             self.paligemma_with_expert.paligemma.language_model.layers[0].self_attn.q_proj.weight.dtype
             == torch.bfloat16
         ):
             suffix_embs = suffix_embs.to(dtype=torch.bfloat16)
             prefix_embs = prefix_embs.to(dtype=torch.bfloat16)
-        
+
         pad_masks = torch.cat([prefix_pad_masks, suffix_pad_masks], dim=1)
         att_masks = torch.cat([prefix_att_masks, suffix_att_masks], dim=1)
 
@@ -1021,7 +1030,6 @@ class PI0Pytorch_Custom(PI0Pytorch):
         if self.loss_value_use_bce:
             value_pred = torch.sigmoid(value_pred)
 
-
         # breakpoint()
-            
+
         return value_pred

@@ -1,4 +1,5 @@
 from collections.abc import Callable, Mapping, Sequence
+import copy
 import dataclasses
 import re
 from typing import Protocol, TypeAlias, TypeVar, runtime_checkable
@@ -7,13 +8,11 @@ import flax.traverse_util as traverse_util
 import jax
 import numpy as np
 from openpi_client import image_tools
+import torch
 
 from openpi.models import tokenizer as _tokenizer
 from openpi.shared import array_typing as at
 from openpi.shared import normalize as _normalize
-
-import torch
-import copy
 
 DataDict: TypeAlias = at.PyTree
 NormStats: TypeAlias = _normalize.NormStats
@@ -288,11 +287,10 @@ class TokenizePrompt(DataTransformFn):
             prompt = prompt.item()
 
         action_advantage = data.get("action_advantage", None)
-        
+
         action_advantage_original = copy.deepcopy(action_advantage)
 
         if action_advantage is not None:
-
             if len(action_advantage.shape) == 0:  # * True, get in
                 # action_advantage = action_advantage.unsqueeze(0)
 
@@ -303,15 +301,16 @@ class TokenizePrompt(DataTransformFn):
                 # TODO: current range is [-1, 1], consider to adjust.
                 action_advantage = np.digitize(action_advantage, bins=np.linspace(-1, 1, 10 + 1)[:-1])
 
-
         tokens, token_masks = self.tokenizer.tokenize(prompt, state, action_advantage=action_advantage)
-        
-        return {**data, "tokenized_prompt": tokens, "tokenized_prompt_mask": token_masks,
 
-                # * Custom        
-                "action_advantage": action_advantage,
-                "action_advantage_original": action_advantage_original,
-                }
+        return {
+            **data,
+            "tokenized_prompt": tokens,
+            "tokenized_prompt_mask": token_masks,
+            # * Custom
+            "action_advantage": action_advantage,
+            "action_advantage_original": action_advantage_original,
+        }
 
 
 @dataclasses.dataclass(frozen=True)

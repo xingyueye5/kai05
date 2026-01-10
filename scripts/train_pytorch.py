@@ -41,8 +41,9 @@ import tqdm
 import wandb
 
 import openpi.models.pi0_config
-import openpi.models_pytorch.pi0_pytorch  # noqa: F401 - Import to register models
-from openpi.models_pytorch.model_registry import create_pytorch_model, get_registered_pytorch_models
+from openpi.models_pytorch.model_registry import create_pytorch_model
+from openpi.models_pytorch.model_registry import get_registered_pytorch_models
+import openpi.models_pytorch.pi0_pytorch
 import openpi.shared.normalize as _normalize
 import openpi.training.config as _config
 import openpi.training.data_loader as _data
@@ -125,7 +126,9 @@ def set_seed(seed: int, local_rank: int):
 
 def build_datasets(config: _config.TrainConfig):
     # Use the unified data loader with PyTorch framework
-    data_loader = _data.create_data_loader(config, framework="pytorch", shuffle=True, skip_norm_stats=config.skip_norm_stats)
+    data_loader = _data.create_data_loader(
+        config, framework="pytorch", shuffle=True, skip_norm_stats=config.skip_norm_stats
+    )
     return data_loader, data_loader.data_config()
 
 
@@ -393,12 +396,12 @@ def train_loop(config: _config.TrainConfig):
     # Build model using registry
     # Determine which model class to use
     pytorch_model_class = getattr(config, "pytorch_model_class", "PI0Pytorch")
-    
+
     # Log available models for debugging
     available_models = list(get_registered_pytorch_models().keys())
     logging.info(f"Available PyTorch models: {available_models}")
     logging.info(f"Using PyTorch model class: {pytorch_model_class}")
-    
+
     if not isinstance(config.model, openpi.models.pi0_config.Pi0Config):
         # Convert dataclass to Pi0Config if needed
         model_cfg = openpi.models.pi0_config.Pi0Config(
@@ -454,7 +457,8 @@ def train_loop(config: _config.TrainConfig):
 
         model_path = os.path.join(config.pytorch_weight_path, "model.safetensors")
         safetensors.torch.load_model(
-            (model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model), model_path,
+            (model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model),
+            model_path,
             strict=False,
         )
         logging.info(f"Loaded PyTorch weights from {config.pytorch_weight_path}")
@@ -638,44 +642,47 @@ def main():
     config = _config.cli()
     train_loop(config)
 
-from openpi.training import config_loader
-import tyro
+
 import sys
+
+import tyro
+
+from openpi.training import config_loader
 
 
 def main_custom():
     """Load config from YAML file and allow command-line overrides.
-    
+
     Usage:
         python scripts/train_pytorch.py ./configs/train/TEST_SPLIT_MERGE.yaml --exp_name test --overwrite
     """
     init_logging()
-    
+
     # Find the YAML file path from command line arguments
     yaml_path = None
     remaining_args = []
-    
+
     for arg in sys.argv[1:]:
-        if yaml_path is None and arg.endswith('.yaml') and not arg.startswith('-'):
+        if yaml_path is None and arg.endswith(".yaml") and not arg.startswith("-"):
             yaml_path = arg
         else:
             remaining_args.append(arg)
-    
+
     if yaml_path is None:
         raise ValueError(
             "Please provide a YAML config file path as the first argument.\n"
             "Usage: python scripts/train_pytorch.py ./configs/train/YOUR_CONFIG.yaml [--exp_name NAME] [--overwrite]"
         )
-    
+
     # Load the config from YAML file
     base_config = config_loader.load_config(yaml_path)
     logging.info(f"Loaded config from {yaml_path}")
-    
+
     # Apply remaining_args as overrides to base_config using tyro
     # Replace sys.argv to only include the remaining arguments
     sys.argv = [sys.argv[0], base_config.name] + remaining_args
     config = tyro.extras.overridable_config_cli({base_config.name: (base_config.name, base_config)})
-    
+
     train_loop(config)
 
 

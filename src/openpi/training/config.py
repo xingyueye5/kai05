@@ -6,7 +6,7 @@ import dataclasses
 import difflib
 import logging
 import pathlib
-from typing import Any, Literal, Protocol, TypeAlias, List
+from typing import Any, Literal, Protocol, TypeAlias
 
 import etils.epath as epath
 import flax.nnx as nnx
@@ -20,6 +20,7 @@ import openpi.models.tokenizer as _tokenizer
 import openpi.policies.aloha_policy as aloha_policy
 import openpi.policies.droid_policy as droid_policy
 import openpi.policies.libero_policy as libero_policy
+import openpi.policies.pika_policy as pika_policy
 import openpi.shared.download as _download
 import openpi.shared.normalize as _normalize
 import openpi.training.droid_rlds_dataset as droid_rlds_dataset
@@ -28,7 +29,6 @@ import openpi.training.misc.roboarena_config as roboarena_config
 import openpi.training.optimizer as _optimizer
 import openpi.training.weight_loaders as weight_loaders
 import openpi.transforms as _transforms
-import openpi.policies.pika_policy as pika_policy
 
 ModelType: TypeAlias = _model.ModelType
 # Work around a tyro issue with using nnx.filterlib.Filter directly.
@@ -66,7 +66,7 @@ class AssetsConfig:
 @dataclasses.dataclass(frozen=True)
 class DataConfig:
     # LeRobot repo id. If None, fake data will be created.
-    repo_id: str | List[str] | None = None
+    repo_id: str | list[str] | None = None
     # Directory within the assets directory containing the data assets.
     asset_id: str | None = None
     # Contains precomputed normalization stats. If None, normalization will not be performed.
@@ -132,7 +132,9 @@ class ModelTransformFactory(GroupFactory):
                         _transforms.InjectDefaultPrompt(self.default_prompt),
                         _transforms.ResizeImages(224, 224),
                         _transforms.TokenizePrompt(
-                            _tokenizer.PaligemmaTokenizer(model_config.max_token_len, download_path=model_config.download_path),
+                            _tokenizer.PaligemmaTokenizer(
+                                model_config.max_token_len, download_path=model_config.download_path
+                            ),
                             discrete_state_input=model_config.discrete_state_input,
                         ),
                         _transforms.PadStatesAndActions(model_config.action_dim),
@@ -168,7 +170,7 @@ class ModelTransformFactory(GroupFactory):
 @dataclasses.dataclass(frozen=True)
 class DataConfigFactory(abc.ABC):
     # The LeRobot repo id.
-    repo_id: str | List[str] = tyro.MISSING
+    repo_id: str | list[str] = tyro.MISSING
     # Determines how the assets will be loaded.
     assets: AssetsConfig = dataclasses.field(default_factory=AssetsConfig)
     # Base config that will be updated by the factory.
@@ -463,6 +465,7 @@ class LeRobotDROIDDataConfig(DataConfigFactory):
             model_transforms=model_transforms,
         )
 
+
 @dataclasses.dataclass(frozen=True)
 class LerobotPikaDataConfig(DataConfigFactory):
     """
@@ -539,6 +542,7 @@ class LerobotPikaDataConfig(DataConfigFactory):
             action_sequence_keys=self.action_sequence_keys,
         )
 
+
 @dataclasses.dataclass(frozen=True)
 class TrainConfig:
     # Name of the config. Must be unique. Will be used to reference this config.
@@ -596,25 +600,24 @@ class TrainConfig:
     log_interval: int = 100
     # How often (in steps) to save checkpoints.
     save_interval: int = 1000
-    
-#***************************************************
+
+    # ***************************************************
     is_train: bool = True  # * Only use partial data in training
-    
+
     # split:    str  = None  # one of ['train_tasks', 'val_tasks', 'heldout_tasks']
     # * Bugfix, only use train_tasks for training
-    split: str = 'train'  # * Only use training tasks for training, choose from ['train', 'val', 'all']
+    split: str = "train"  # * Only use training tasks for training, choose from ['train', 'val', 'all']
 
     n_history: int = 0  # Number of history frames to use. If 0, no history will be used.
     with_episode_start: bool = False  # If true, will use the episode start frame as the first frame in the history.
-    skip_sample_ratio_within_episode: float = 0.
+    skip_sample_ratio_within_episode: float = 0.0
     # p_video_rewind: float = 0.
     timestep_difference_mode: bool = False
     stage_process_mode: bool = False
     drop_last: bool = True  # If true, will drop the last incomplete batch.
-    
 
     skip_norm_stats: bool = False
-#***************************************************
+    # ***************************************************
     # If set, any existing checkpoints matching step % keep_period == 0 will not be deleted.
     keep_period: int | None = 5000
 
@@ -1080,7 +1083,10 @@ _CONFIGS = [
             download_path="/cpfs01/user/baidexiang/test_ckpt/big_vision/paligemma_tokenizer.model",
         ),
         data=LerobotPikaDataConfig(
-            repo_id=["/cpfs01/shared/filtered_cut_data/short_sleeve/demo_A_full_process/v2-2/1102_21_234_v2-2_3000_lerobot", "/cpfs01/shared/filtered_cut_data/short_sleeve/demo_A_full_process/v2-2/1104_20_270_v2-2_3000_lerobot"],
+            repo_id=[
+                "/cpfs01/shared/filtered_cut_data/short_sleeve/demo_A_full_process/v2-2/1102_21_234_v2-2_3000_lerobot",
+                "/cpfs01/shared/filtered_cut_data/short_sleeve/demo_A_full_process/v2-2/1104_20_270_v2-2_3000_lerobot",
+            ],
             base_config=DataConfig(prompt_from_task=True),
         ),
         batch_size=16,
@@ -1091,165 +1097,136 @@ _CONFIGS = [
     # * VALUE_TORCH_Pi05_KAI_FLATTEN_FOLD
     TrainConfig(
         name="VALUE_TORCH_Pi05_KAI_FLATTEN_FOLD",
-
         model=pi0_config.Pi0Config_Custom(
             pi05=True,
             with_value_head=True,
-            loss_value_weight=1.,
+            loss_value_weight=1.0,
             loss_value_use_bce=False,
-            loss_action_weight=0.,  # ! No action loss
-            p_mask_ego_state=1.,
+            loss_action_weight=0.0,  # ! No action loss
+            p_mask_ego_state=1.0,
             timestep_difference_mode=True,  # * Can only use either one of them.
-
             discrete_state_input=False,  # !!!!!! Not using states into prompt
             download_path="/cpfs01/user/baidexiang/test_ckpt/big_vision/paligemma_tokenizer.model",
         ),
-        
         data=LerobotPikaDataConfig(
-
-            repo_id = [
+            repo_id=[
                 "/cpfs01/shared/filtered_cut_data/short_sleeve/flatten_fold/v9-3/1022_20_590_v9-3_2000_lerobot",
                 "/cpfs01/shared/filtered_cut_data/short_sleeve/flatten_fold/v9-3/1023_27_311_v9-3_3000_lerobot",
                 "/cpfs01/shared/filtered_cut_data/short_sleeve/flatten_fold/v9-3/1024_27_433_v9-3_3000_lerobot",
             ],
-
             assets=AssetsConfig(
                 assets_dir="/cpfs01/shared/filtered_cut_data/short_sleeve/flatten_fold/v9-3/",
                 asset_id="1022_20_590_v9-3_2000_lerobot",
             ),
-
             default_prompt="Flatten and fold the cloth.",
-
             # * why removing "prompt" here will lead to an error in transforms.py
             # * while in TORCH_Pi05_rl_cpu_10_27, there's no such repacktransform.
             repack_transforms=_transforms.Group(
                 inputs=[
-                _transforms.RepackTransform(
-                    {
-                        "images": {
-                            "top_head": "observation.images.top_head",
-                            "hand_left": "observation.images.hand_left",
-                            "hand_right": "observation.images.hand_right",
-
-                            "his_-100_top_head": "his_-100_observation.images.top_head",
-                            "his_-100_hand_left": "his_-100_observation.images.hand_left",
-                            "his_-100_hand_right": "his_-100_observation.images.hand_right",
-                        },
-                        "state": "observation.state",
-                        "actions": "action",
-                        
-                        # "prompt": "prompt",  # ! Not adding this for default prompt.
-                        
-                        "episode_length": "episode_length",
-                        "frame_index": "frame_index",
-                        "episode_index": "episode_index",
-                        
-                        "progress_gt": "progress_gt",
-                        "stage_progress_gt": "stage_progress_gt",
-                        "progress": "progress",
-                        # "is_suboptimal": "is_suboptimal",
-                    }
-                )
-            ]
-            )
+                    _transforms.RepackTransform(
+                        {
+                            "images": {
+                                "top_head": "observation.images.top_head",
+                                "hand_left": "observation.images.hand_left",
+                                "hand_right": "observation.images.hand_right",
+                                "his_-100_top_head": "his_-100_observation.images.top_head",
+                                "his_-100_hand_left": "his_-100_observation.images.hand_left",
+                                "his_-100_hand_right": "his_-100_observation.images.hand_right",
+                            },
+                            "state": "observation.state",
+                            "actions": "action",
+                            # "prompt": "prompt",  # ! Not adding this for default prompt.
+                            "episode_length": "episode_length",
+                            "frame_index": "frame_index",
+                            "episode_index": "episode_index",
+                            "progress_gt": "progress_gt",
+                            "stage_progress_gt": "stage_progress_gt",
+                            "progress": "progress",
+                            # "is_suboptimal": "is_suboptimal",
+                        }
+                    )
+                ]
+            ),
         ),
-
         pytorch_weight_path="/cpfs01/user/baidexiang/test_ckpt/torch_ver/pi05_base/",
-        pytorch_model_class="PI0Pytorch_Custom", # * Custom model class
+        pytorch_model_class="PI0Pytorch_Custom",  # * Custom model class
         num_train_steps=100_000,
         keep_period=10000,
         save_interval=10000,
-
-
         num_workers=60,
         # batch_size=16,  # * 1 gpus
-        batch_size=128, # * 8 gpus
-        
+        batch_size=128,  # * 8 gpus
         with_episode_start=False,
         timestep_difference_mode=True,  # * Can only use either one of them.
-        stage_process_mode=False,        # * Using stage progress supervision
-        skip_norm_stats=True,           # *  No norm stats used.
+        stage_process_mode=False,  # * Using stage progress supervision
+        skip_norm_stats=True,  # *  No norm stats used.
     ),
-
     # * VALUE_TORCH_Pi05_KAI_FLATTEN_FOLD_SINGLE
     TrainConfig(
         name="VALUE_TORCH_Pi05_KAI_FLATTEN_FOLD_SINGLE",
-
         model=pi0_config.Pi0Config_Custom(
             pi05=True,
             with_value_head=True,
-            loss_value_weight=1.,
+            loss_value_weight=1.0,
             loss_value_use_bce=False,
-            loss_action_weight=0.,  # ! No action loss
-            p_mask_ego_state=1.,
+            loss_action_weight=0.0,  # ! No action loss
+            p_mask_ego_state=1.0,
             timestep_difference_mode=False,  # * Can only use either one of them.
             download_path="/cpfs01/user/baidexiang/test_ckpt/big_vision/paligemma_tokenizer.model",
             discrete_state_input=False,  # !!!!!! Not using states into prompt
         ),
-        
         data=LerobotPikaDataConfig(
-
-            repo_id = [
+            repo_id=[
                 "/cpfs01/shared/filtered_cut_data/short_sleeve/flatten_fold/v9-3/1022_20_590_v9-3_2000_lerobot",
                 "/cpfs01/shared/filtered_cut_data/short_sleeve/flatten_fold/v9-3/1023_27_311_v9-3_3000_lerobot",
                 "/cpfs01/shared/filtered_cut_data/short_sleeve/flatten_fold/v9-3/1024_27_433_v9-3_3000_lerobot",
             ],
-
             assets=AssetsConfig(
                 assets_dir="/cpfs01/shared/filtered_cut_data/short_sleeve/flatten_fold/v9-3",
                 asset_id="1022_20_590_v9-3_2000_lerobot",
             ),
-
             default_prompt="Flatten and fold the cloth.",
-
             # * why removing "prompt" here will lead to an error in transforms.py
             # * while in TORCH_Pi05_rl_cpu_10_27, there's no such repacktransform.
             repack_transforms=_transforms.Group(
                 inputs=[
-                _transforms.RepackTransform(
-                    {
-                        "images": {
-                            "top_head": "observation.images.top_head",
-                            "hand_left": "observation.images.hand_left",
-                            "hand_right": "observation.images.hand_right",
-
-                            # "his_-100_top_head": "his_-100_observation.images.top_head",
-                            # "his_-100_hand_left": "his_-100_observation.images.hand_left",
-                            # "his_-100_hand_right": "his_-100_observation.images.hand_right",
-                        },
-                        "state": "observation.state",
-                        "actions": "action",
-                        
-                        # "prompt": "prompt",  # ! Not adding this for default prompt.
-                        
-                        "episode_length": "episode_length",
-                        "frame_index": "frame_index",
-                        "episode_index": "episode_index",
-                        "progress_gt": "progress_gt",
-                        "stage_progress_gt": "stage_progress_gt",
-                        "progress": "progress",
-                        # "is_suboptimal": "is_suboptimal",
-                    }
-                )
-            ]
-            )
+                    _transforms.RepackTransform(
+                        {
+                            "images": {
+                                "top_head": "observation.images.top_head",
+                                "hand_left": "observation.images.hand_left",
+                                "hand_right": "observation.images.hand_right",
+                                # "his_-100_top_head": "his_-100_observation.images.top_head",
+                                # "his_-100_hand_left": "his_-100_observation.images.hand_left",
+                                # "his_-100_hand_right": "his_-100_observation.images.hand_right",
+                            },
+                            "state": "observation.state",
+                            "actions": "action",
+                            # "prompt": "prompt",  # ! Not adding this for default prompt.
+                            "episode_length": "episode_length",
+                            "frame_index": "frame_index",
+                            "episode_index": "episode_index",
+                            "progress_gt": "progress_gt",
+                            "stage_progress_gt": "stage_progress_gt",
+                            "progress": "progress",
+                            # "is_suboptimal": "is_suboptimal",
+                        }
+                    )
+                ]
+            ),
         ),
-
         pytorch_weight_path="/cpfs01/user/baidexiang/test_ckpt/torch_ver/pi05_base/",
-        pytorch_model_class="PI0Pytorch_Custom",       # * Custom model class
+        pytorch_model_class="PI0Pytorch_Custom",  # * Custom model class
         num_train_steps=100_000,
         keep_period=10000,
         save_interval=10000,
-
-
         num_workers=55,
         # batch_size=16,  # * 1 gpus
-        batch_size=18*8, # * 8 gpus
-        
+        batch_size=18 * 8,  # * 8 gpus
         with_episode_start=False,
         timestep_difference_mode=False,  # * Can only use either one of them.
-        stage_process_mode=False,        # * Using stage progress supervision
-        skip_norm_stats=True,           # *  No norm stats used.
+        stage_process_mode=False,  # * Using stage progress supervision
+        skip_norm_stats=True,  # *  No norm stats used.
     ),
     # RoboArena & PolaRiS configs.
     *roboarena_config.get_roboarena_configs(),

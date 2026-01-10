@@ -19,13 +19,15 @@ class PaligemmaTokenizer:
         with path.open("rb") as f:
             self._tokenizer = sentencepiece.SentencePieceProcessor(model_proto=f.read())
 
-    def tokenize(self, prompt: str, state: np.ndarray | None = None, action_advantage: np.ndarray | None = None) -> tuple[np.ndarray, np.ndarray]:
+    def tokenize(
+        self, prompt: str, state: np.ndarray | None = None, action_advantage: np.ndarray | None = None
+    ) -> tuple[np.ndarray, np.ndarray]:
         cleaned_text = prompt.strip().replace("_", " ").replace("\n", " ")
         if state is not None and action_advantage is not None:
             # This is the Pi05 format with action quality indicator, where the state is part of the discrete language input.
             discretized_state = np.digitize(state, bins=np.linspace(-1, 1, 256 + 1)[:-1]) - 1
             state_str = " ".join(map(str, discretized_state))
-            
+
             full_prompt = f"Task: {cleaned_text}, State: {state_str}, Advantage: {action_advantage};\nAction: "
             tokens = self._tokenizer.encode(full_prompt, add_bos=True)
         elif state is not None:
@@ -56,8 +58,12 @@ class PaligemmaTokenizer:
 
 
 class FASTTokenizer:
-    def __init__(self, max_len: int = 256, fast_tokenizer_path: str = "physical-intelligence/fast", 
-                download_path: str = "gs://big_vision/paligemma_tokenizer.model"):
+    def __init__(
+        self,
+        max_len: int = 256,
+        fast_tokenizer_path: str = "physical-intelligence/fast",
+        download_path: str = "gs://big_vision/paligemma_tokenizer.model",
+    ):
         self._max_len = max_len
 
         # Download base PaliGemma tokenizer
@@ -158,7 +164,9 @@ class BinningTokenizer:
     Standard RT-2 / OpenVLA style binning tokenizer.
     """
 
-    def __init__(self, max_len: int = 256, n_bins: int = 256, download_path: str = "gs://big_vision/paligemma_tokenizer.model"):
+    def __init__(
+        self, max_len: int = 256, n_bins: int = 256, download_path: str = "gs://big_vision/paligemma_tokenizer.model"
+    ):
         self._max_len = max_len
         self._n_bins = n_bins
 
@@ -256,7 +264,12 @@ class FSQTokenizer:
     FSQ tokenizer from the FAST paper baselines.
     """
 
-    def __init__(self, max_len: int = 256, fsq_tokenizer_path: str | None = None, download_path: str = "gs://big_vision/paligemma_tokenizer.model"):
+    def __init__(
+        self,
+        max_len: int = 256,
+        fsq_tokenizer_path: str | None = None,
+        download_path: str = "gs://big_vision/paligemma_tokenizer.model",
+    ):
         self._max_len = max_len
 
         assert fsq_tokenizer_path is not None, "fsq_tokenizer_path must be provided"

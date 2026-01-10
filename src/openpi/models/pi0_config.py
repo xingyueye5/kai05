@@ -111,7 +111,9 @@ class Pi0Config(_model.BaseModelConfig):
 
 @dataclasses.dataclass(frozen=True)
 class Pi0Config_Custom(Pi0Config):
-    timestep_difference_mode: bool = False  # * If true, the frame_index input represents the difference between two timesteps.
+    timestep_difference_mode: bool = (
+        False  # * If true, the frame_index input represents the difference between two timesteps.
+    )
     stage_process_mode: bool = False
 
     # * Custom
@@ -122,6 +124,3 @@ class Pi0Config_Custom(Pi0Config):
 
     p_mask_ego_state: float = 0.0
     cfg_scale: float = 1.0
-
-
-    

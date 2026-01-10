@@ -172,6 +172,7 @@ def preprocess_observation_pytorch(
         token_loss_mask=observation.token_loss_mask,
     )
 
+
 def preprocess_observation_pytorch_custom(
     observation,
     *,
@@ -194,11 +195,13 @@ def preprocess_observation_pytorch_custom(
 
     image_keys = list(observation.images.keys())
 
-    part_order = {'base': 0, 'left_wrist': 1, 'right_wrist': 2}
+    part_order = {"base": 0, "left_wrist": 1, "right_wrist": 2}
+
     def simple_sort_key(k):
-        part, timestep_str, _ = k.rsplit('_', 2)
+        part, timestep_str, _ = k.rsplit("_", 2)
         timestep = int(timestep_str)
         return (timestep, part_order[part])
+
     image_keys = sorted(image_keys, key=simple_sort_key)
 
     out_images = {}
@@ -286,7 +289,6 @@ def preprocess_observation_pytorch_custom(
                         align_corners=False,
                     ).permute(0, 2, 3, 1)  # [b, c, h, w] -> [b, h, w, c]
 
-            
             # Color augmentations for all cameras
             # Random brightness
             # Use tensor operations instead of .item() for torch.compile compatibility
@@ -350,12 +352,11 @@ def preprocess_observation_pytorch_custom(
             episode_index=observation.episode_index,
             progress=observation.progress,
         )
-    else:
-        # * Simplified for sampling value
-        return SimpleProcessedObservation(
-            images=out_images,
-            image_masks=out_masks,
-            state=observation.state,
-            tokenized_prompt=observation.tokenized_prompt,
-            tokenized_prompt_mask=observation.tokenized_prompt_mask,
-        )
+    # * Simplified for sampling value
+    return SimpleProcessedObservation(
+        images=out_images,
+        image_masks=out_masks,
+        state=observation.state,
+        tokenized_prompt=observation.tokenized_prompt,
+        tokenized_prompt_mask=observation.tokenized_prompt_mask,
+    )

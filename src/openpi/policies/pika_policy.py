@@ -30,26 +30,19 @@ class PikaInputs(transforms.DataTransformFn):
     # replaced with black images and the corresponding `image_mask` will be set to False.
     EXPECTED_CAMERAS: ClassVar[tuple[str, ...]] = ("top_head", "hand_left", "hand_right")
 
-    required_rename_map = {
-        "top_head": "base_0_rgb",
-        "hand_left": "left_wrist_0_rgb",
-        "hand_right": "right_wrist_0_rgb"
-    }
-
+    required_rename_map = {"top_head": "base_0_rgb", "hand_left": "left_wrist_0_rgb", "hand_right": "right_wrist_0_rgb"}
 
     # * Not required cameras, can be ignored if not in the dataloader
     optional_rename_map = {
         "his_-100_top_head": "base_-100_rgb",
-
         "his_-100_hand_left": "left_wrist_-100_rgb",
-
         "his_-100_hand_right": "right_wrist_-100_rgb",
     }
 
     all_rename_map = {**required_rename_map, **optional_rename_map}
 
     EXTRA_CAMERAS = tuple(optional_rename_map.keys())
-    
+
     # if set all state to zeros
     # mask_state: bool = False
 
@@ -69,8 +62,6 @@ class PikaInputs(transforms.DataTransformFn):
         # * but in_images keys can be a subset of EXPECTED_CAMERAS + EXTRA_CAMERAS
         if set(in_images) - set(self.EXPECTED_CAMERAS) - set(self.EXTRA_CAMERAS):
             raise ValueError(f"Expected images to contain {self.EXPECTED_CAMERAS}, got {tuple(in_images)}")
-
-
 
         # Pad the proprioceptive input to the action dimension of the model
         state = transforms.pad_to_dim(data["state"], self.action_dim)
@@ -105,7 +96,6 @@ class PikaInputs(transforms.DataTransformFn):
         # Create image mask based on available cameras
         # image_mask = {self.required_rename_map[camera]: np.True_ for camera in self.EXPECTED_CAMERAS}
 
-
         # filter unnormal state / action value, set to 0
         state = np.where(state > np.pi, 0, state)
         state = np.where(state < -np.pi, 0, state)
@@ -130,9 +120,9 @@ class PikaInputs(transforms.DataTransformFn):
             if mask_padding:
                 # Create action mask for padding
                 action_mask = np.ones_like(actions, dtype=bool)
-                action_mask[:, self.action_dim:] = False
+                action_mask[:, self.action_dim :] = False
                 inputs["action_mask"] = action_mask
-            
+
             # if self.convert_to_eef_position:
             #     actions[..., :14] = batch_qpos_to_eef_pos(actions[..., :14])
             inputs["actions"] = actions.squeeze()
@@ -144,7 +134,7 @@ class PikaInputs(transforms.DataTransformFn):
 
         # for key, value in inputs.items():
         #     print(key, value.shape) if isinstance(value, np.ndarray) else print(key, type(value))
-        
+
         # * Custom
         if "frame_index" in data:
             inputs["frame_index"] = data["frame_index"]
@@ -155,7 +145,7 @@ class PikaInputs(transforms.DataTransformFn):
 
         if "action_advantage" in data:
             action_advantage = data["action_advantage"]
-            
+
             # print("!!!!!!!! action_advantage in PikaInputs:", action_advantage)
             # print("!!!!!!!! action_advantage is None?", action_advantage is None)
             # print("!!!!!!!! type of action_advantage:", type(action_advantage))
@@ -163,7 +153,6 @@ class PikaInputs(transforms.DataTransformFn):
             # * !!!!!!!! action_advantage in PikaInputs: tensor(0.7479)
             # * !!!!!!!! action_advantage is None? False
             # * !!!!!!!! type of action_advantage: <class 'torch.Tensor'>
-
 
             if action_advantage is not None:
                 # print("Type of action_advantage:", type(action_advantage))
@@ -174,7 +163,7 @@ class PikaInputs(transforms.DataTransformFn):
                 elif type(action_advantage) is torch.Tensor:
                     action_advantage = action_advantage.detach().clone()
                 else:
-                    NotImplementedError(f"Unsupported type for action_advantage: {type(action_advantage)}")
+                    raise NotImplementedError(f"Unsupported type for action_advantage: {type(action_advantage)}")
                 # except:
                 #     print("Failed to convert action_advantage to torch tensor.")
                 #     print("Error with action_advantage:", action_advantage)
@@ -182,8 +171,8 @@ class PikaInputs(transforms.DataTransformFn):
                 #     print("action_advantage shape:", action_advantage.shape)
                 #     breakpoint()
             else:
-                action_advantage = torch.tensor(1.)
-            
+                action_advantage = torch.tensor(1.0)
+
             inputs["action_advantage"] = action_advantage
 
         if "progress" in data:
@@ -191,14 +180,16 @@ class PikaInputs(transforms.DataTransformFn):
 
         if "action_advantage_original" in data:
             action_advantage_original = data["action_advantage_original"]
-        
+
             if type(action_advantage_original) is np.ndarray:
                 action_advantage_original = torch.from_numpy(action_advantage_original)
             elif type(action_advantage_original) is torch.Tensor:
                 action_advantage_original = action_advantage_original.detach().clone()
             else:
-                NotImplementedError(f"Unsupported type for action_advantage_original: {type(action_advantage_original)}")
-            
+                raise NotImplementedError(
+                    f"Unsupported type for action_advantage_original: {type(action_advantage_original)}"
+                )
+
             inputs["action_advantage_original"] = action_advantage_original
 
         if "image_original" in data:
@@ -216,4 +207,4 @@ class PikaOutputs(transforms.DataTransformFn):
 
     def __call__(self, data: dict) -> dict:
         # Return the first 14 dimensions of actions (13 joints + 1 gripper)
-        return {"actions": np.asarray(data["actions"][:, :14])} 
+        return {"actions": np.asarray(data["actions"][:, :14])}
