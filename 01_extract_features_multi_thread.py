@@ -452,6 +452,13 @@ def extract_features_from_dataset(
     if num_gpus > 1:
         print(f"检测到 {num_gpus} 个GPU，使用 DataParallel 并行")
         model = torch.nn.DataParallel(model)
+        # batch_size和num_workers是单卡配置，多卡时自动乘以GPU数量
+        total_batch_size = batch_size * num_gpus
+        total_num_workers = num_workers * num_gpus
+        print(f"单卡batch_size: {batch_size}, 总batch_size: {total_batch_size}")
+        print(f"单卡num_workers: {num_workers}, 总num_workers: {total_num_workers}")
+        batch_size = total_batch_size
+        num_workers = total_num_workers
 
     print(f"使用设备: {device} (GPU数量: {num_gpus})")
     model = model.to(device)
@@ -588,16 +595,16 @@ def main():
         default="/cpfs01/user/zhaolirui/siglip2/siglip2-giant-opt-patch16-384",
         help="SigLIP模型检查点路径",
     )
-    parser.add_argument("--batch_size", type=int, default=1024, help="批处理大小 (默认: 1024)")
+    parser.add_argument("--batch_size", type=int, default=1024, help="单卡批处理大小，多卡时会自动乘以GPU数量 (默认: 1024)")
     parser.add_argument("--frame_interval", type=int, default=1, help="帧采样间隔，1表示每帧都处理 (默认: 1)")
     parser.add_argument(
         "--camera_keys",
         type=str,
         nargs="+",
-        default=None,
+        default=None, 
         help="要处理的相机视角列表，例如: top_head wrist (默认: 处理所有视角)",
     )
-    parser.add_argument("--num_workers", type=int, default=8, help="数据加载线程数 (默认: 8)")
+    parser.add_argument("--num_workers", type=int, default=8, help="单卡数据加载线程数，多卡时会自动乘以GPU数量 (默认: 8)")
 
     args = parser.parse_args()
 
