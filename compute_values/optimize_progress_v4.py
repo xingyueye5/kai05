@@ -156,10 +156,11 @@ def worker_init_fn(gpu_id: int, features: torch.Tensor, progress_gts: torch.Tens
         _worker_gpu_data['gpu_id'] = None
 
 
-def process_single_episode(args: Tuple, exclude_self: bool = True):
+def process_single_episode(args: Tuple, exclude_self: bool = True, query_chunk_size: int = 128):
     """
     处理单个episode
     使用worker进程初始化时缓存的GPU数据
+    分块处理以避免显存溢出
     
     Args:
         args: (episode_index, top_n, window)
@@ -173,53 +174,83 @@ def process_single_episode(args: Tuple, exclude_self: bool = True):
     progress_gts = _worker_gpu_data['progress_gts']
     video_ids = _worker_gpu_data['video_ids']
     
-    progress_predictions = []
-    query_features = features[video_ids == episode_index]
-    similarity_scores = query_features @ features.T
-    
-    # 排除自身
-    if exclude_self:
-        similarity_scores.masked_fill_(video_ids.unsqueeze(0) == episode_index, float('-inf'))
-    
-    query_progress_gts = progress_gts[video_ids == episode_index]
-    
-    # 向量化计算：避免Python for循环
+    query_mask = video_ids == episode_index
+    query_features = features[query_mask]
+    query_progress_gts = progress_gts[query_mask]
     num_query = len(query_features)
     
-    # 构建所有帧的mask矩阵 [num_query, num_all_frames]
-    # mask_i = (progress_gts < query_progress_gts[i] - window) | (progress_gts > query_progress_gts[i] + window)
-    lower_bounds = query_progress_gts.unsqueeze(1) - window  # [num_query, 1]
-    upper_bounds = query_progress_gts.unsqueeze(1) + window  # [num_query, 1]
-    progress_gts_expanded = progress_gts.unsqueeze(0)  # [1, num_all_frames]
+    if num_query == 0:
+        return [], episode_index
     
-    # [num_query, num_all_frames]
-    mask_matrix = (progress_gts_expanded < lower_bounds) | (progress_gts_expanded > upper_bounds)
+    # 分块处理参数：控制每次处理的query帧数
+    # 30%显存使用率 -> 可增大chunk_size提升并行度
+    # 设置为128，约占用90%显存
+    chunk_size = query_chunk_size
     
-    # 应用mask到similarity_scores
-    similarity_scores_masked = similarity_scores
-    similarity_scores_masked.masked_fill_(mask_matrix, float('-inf'))
+    all_predictions = []
+    all_valid_mask = []
     
-    # 批量topk
-    actual_top_n = min(top_n, similarity_scores.shape[1])
-    _, top_indices = torch.topk(similarity_scores_masked, actual_top_n, dim=1)  # [num_query, top_n]
+    # 预先计算用于排除自身的mask（只计算一次）
+    if exclude_self:
+        self_mask = video_ids == episode_index  # [num_all_frames]
     
-    # 获取top progress_gts并计算均值
-    top_progress_values = progress_gts[top_indices]  # [num_query, top_n]
+    for chunk_start in range(0, num_query, chunk_size):
+        chunk_end = min(chunk_start + chunk_size, num_query)
+        chunk_query_features = query_features[chunk_start:chunk_end]
+        chunk_query_progress = query_progress_gts[chunk_start:chunk_end]
+        
+        # 计算当前chunk的相似度 [chunk_num, num_all_frames]
+        similarity_scores = chunk_query_features @ features.T
+        
+        # 排除自身（使用预计算的mask）
+        if exclude_self:
+            similarity_scores.masked_fill_(self_mask.unsqueeze(0), float('-inf'))
+        
+        # 向量化mask计算（比逐行处理快得多）
+        # lower_bounds, upper_bounds: [chunk_num, 1]
+        # progress_gts: [1, num_all_frames] -> broadcast to [chunk_num, num_all_frames]
+        lower_bounds = (chunk_query_progress - window).unsqueeze(1)
+        upper_bounds = (chunk_query_progress + window).unsqueeze(1)
+        progress_gts_exp = progress_gts.unsqueeze(0)
+        
+        # 创建并应用mask（向量化操作）
+        mask_matrix = (progress_gts_exp < lower_bounds) | (progress_gts_exp > upper_bounds)
+        similarity_scores.masked_fill_(mask_matrix, float('-inf'))
+        del lower_bounds, upper_bounds, progress_gts_exp, mask_matrix
+        
+        # 处理无效值（全是-inf的行）
+        valid_mask = ~torch.all(similarity_scores == float('-inf'), dim=1)
+        
+        # 批量topk
+        actual_top_n = min(top_n, similarity_scores.shape[1])
+        _, top_indices = torch.topk(similarity_scores, actual_top_n, dim=1)
+        del similarity_scores
+        
+        # 获取top progress_gts并计算均值
+        top_progress_values = progress_gts[top_indices]
+        del top_indices
+        
+        predictions = top_progress_values.mean(dim=1)
+        del top_progress_values
+        
+        all_predictions.append(predictions)
+        all_valid_mask.append(valid_mask)
     
-    # 处理无效值（全是-inf的行）
-    valid_mask = ~torch.all(similarity_scores_masked == float('-inf'), dim=1)
-    predictions = top_progress_values.mean(dim=1)  # [num_query]
+    # 合并所有chunk的结果
+    all_predictions = torch.cat(all_predictions, dim=0)
+    all_valid_mask = torch.cat(all_valid_mask, dim=0)
     
     # 只保留有效预测
-    progress_predictions = predictions[valid_mask].tolist()
+    progress_predictions = all_predictions[all_valid_mask].tolist()
+    del all_predictions, all_valid_mask, query_features, query_progress_gts
     
-    del query_features, similarity_scores, query_progress_gts, mask_matrix, similarity_scores_masked
+    torch.cuda.empty_cache()
     return progress_predictions, episode_index
         
 
 
 def run_gpu_worker(gpu_id: int, worker_id: int, features: torch.Tensor, progress_gts: torch.Tensor, 
-                   video_ids: torch.Tensor, tasks: List[Tuple], result_queue: mp.Queue, exclude_self: bool = True):
+                   video_ids: torch.Tensor, tasks: List[Tuple], result_queue: mp.Queue, exclude_self: bool = True, query_chunk_size: int = 128):
     """
     GPU worker进程：初始化GPU数据后处理分配的任务
     
@@ -239,7 +270,7 @@ def run_gpu_worker(gpu_id: int, worker_id: int, features: torch.Tensor, progress
         
         # 处理所有分配给该worker的任务
         for task in tasks:
-            result = process_single_episode(task, exclude_self)
+            result = process_single_episode(task, exclude_self, query_chunk_size)
             result_queue.put(result)
     except Exception as e:
         print(f"GPU {gpu_id} Worker {worker_id}: 发生错误: {e}")
@@ -318,7 +349,7 @@ def main(workers_per_gpu: int = 1, user_args: argparse.Namespace = None):
                 p = mp.Process(
                     target=run_gpu_worker,
                     args=(gpu_id, worker_idx, features, progress_gts, video_ids, 
-                          worker_tasks[global_worker_id], result_queue, user_args.exclude_self)
+                          worker_tasks[global_worker_id], result_queue, user_args.exclude_self, user_args.query_chunk_size)
                 )
                 p.start()
                 workers.append(p)
@@ -365,6 +396,7 @@ def build_parsers():
     parser.add_argument("--top_n", type=int, default=-1, help="top-n匹配数")
     parser.add_argument("--exclude_self", action="store_true", help="是否排除自身")
     parser.add_argument("--chunk_size", type=int, default=1000, help="parquet chunk大小")
+    parser.add_argument("--query_chunk_size", type=int, default=64, help="query chunk大小")
     # parser.add_argument("--camera_keys", type=str, nargs="+", default=None, help="要使用的相机列表")
     return parser.parse_args()
 if __name__ == "__main__":
