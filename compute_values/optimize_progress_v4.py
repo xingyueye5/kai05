@@ -1,0 +1,360 @@
+"""
+每次加载一对视频，计算其中任意两帧之间的相似性，之后将对应序列压入限制大小的小顶堆，最后将堆中平均similarity作为预测结果
+
+多进程共享版本：
+- 只从硬盘读取一次数据到CPU共享内存
+- 支持多个GPU各自从共享内存获取数据
+- 每个GPU进程可以独立工作
+"""
+import torch
+import torch.multiprocessing as mp
+import numpy as np
+from typing import Any, List, Dict, Tuple, Optional
+from pathlib import Path
+from tqdm import tqdm
+import argparse
+import pandas as pd
+import os
+import time
+
+class SharedFeatureStore:
+    """
+    共享特征存储器
+    - 只从硬盘读取一次数据到CPU共享内存
+    - 多个GPU进程可以各自获取数据副本
+    """
+    
+    def __init__(self, source_path: Path):
+        """
+        初始化并加载数据到CPU共享内存（只读一次硬盘）
+        
+        Args:
+            source_path: 特征文件路径
+        """
+        print(f"从硬盘加载特征数据...")
+        t0 = time.time()
+        
+        # 只读一次硬盘
+        features_all = torch.load(
+            source_path / 'features' / 'features_merged_top_head.pt',
+            map_location='cpu',
+            weights_only=False
+        )
+        
+        # 存储所有数据
+        self._features: torch.Tensor = features_all["features"]
+        self._video_ids = features_all["video_ids"]
+        self._frame_indices = features_all["frame_indices"]
+        self._progress_gt = features_all["progress_gt"]
+        self._video_names = features_all["video_names"]
+        
+        # 将tensor放入CPU共享内存，多进程可直接访问
+        self._features.share_memory_()
+        
+        print(f"数据加载完成，耗时: {time.time() - t0:.2f}s")
+        print(f"  - features shape: {self._features.shape}, dtype: {self._features.dtype}")
+        print(f"  - 共享内存状态: {self._features.is_shared()}")
+    
+    @property
+    def features(self) -> torch.Tensor:
+        """CPU共享内存中的features（所有进程共享）"""
+        return self._features
+    
+    @property
+    def video_ids(self):
+        return self._video_ids
+    
+    @property
+    def frame_indices(self):
+        return self._frame_indices
+    
+    @property
+    def progress_gt(self):
+        return self._progress_gt
+    
+    @property
+    def video_names(self):
+        return self._video_names
+    
+    def get_features_on_gpu(self, gpu_id: int) -> torch.Tensor:
+        """
+        获取指定GPU上的features副本
+        
+        Args:
+            gpu_id: GPU编号
+            
+        Returns:
+            该GPU上的features张量
+        """
+        device = torch.device(f'cuda:{gpu_id}')
+        return self._features.to(device)
+    
+    def get_all(self) -> Dict[str, Any]:
+        """获取所有共享数据"""
+        return {
+            "features": self._features,
+            "video_ids": self._video_ids,
+            "frame_indices": self._frame_indices,
+            "progress_gt": self._progress_gt,
+            "video_names": self._video_names,
+        }
+
+
+# 全局共享存储（用于多进程访问）
+_shared_store: Optional[SharedFeatureStore] = None
+
+# Worker进程的全局GPU数据缓存
+_worker_gpu_data: Dict[str, Any] = {}
+
+
+def init_shared_store(source_path: Path) -> SharedFeatureStore:
+    """
+    初始化全局共享存储（在主进程中调用一次）
+    """
+    global _shared_store
+    if _shared_store is None:
+        _shared_store = SharedFeatureStore(source_path)
+    return _shared_store
+
+
+def get_shared_store() -> SharedFeatureStore:
+    """获取全局共享存储"""
+    global _shared_store
+    if _shared_store is None:
+        raise RuntimeError("共享存储未初始化，请先调用 init_shared_store()")
+    return _shared_store
+
+
+def worker_init_fn(gpu_id: int, features: torch.Tensor, progress_gts: torch.Tensor, video_ids: torch.Tensor):
+    """
+    Worker进程初始化函数
+    在worker启动时将数据加载到对应GPU，后续该worker的所有任务共享这份GPU数据
+    
+    Args:
+        gpu_id: 该worker使用的GPU编号
+        features: CPU共享内存中的features
+        progress_gts: progress ground truth
+        video_ids: video ids
+    """
+    global _worker_gpu_data
+    
+    if gpu_id is not None and torch.cuda.is_available():
+        torch.cuda.set_device(gpu_id)
+        device = torch.device(f'cuda:{gpu_id}')
+        # 将数据加载到GPU并缓存
+        _worker_gpu_data['features'] = features.to(device)
+        _worker_gpu_data['progress_gts'] = progress_gts.to(device)
+        _worker_gpu_data['video_ids'] = video_ids.to(device)
+        _worker_gpu_data['device'] = device
+        _worker_gpu_data['gpu_id'] = gpu_id
+    else:
+        # CPU模式
+        _worker_gpu_data['features'] = features
+        _worker_gpu_data['progress_gts'] = progress_gts
+        _worker_gpu_data['video_ids'] = video_ids
+        _worker_gpu_data['device'] = torch.device('cpu')
+        _worker_gpu_data['gpu_id'] = None
+
+
+def process_single_episode(args: Tuple, exclude_self: bool = True):
+    """
+    处理单个episode
+    使用worker进程初始化时缓存的GPU数据
+    
+    Args:
+        args: (episode_index, top_n, window)
+    """
+    global _worker_gpu_data
+    
+    episode_index, top_n, window = args
+    
+    # 使用worker初始化时缓存的GPU数据
+    features = _worker_gpu_data['features']
+    progress_gts = _worker_gpu_data['progress_gts']
+    video_ids = _worker_gpu_data['video_ids']
+    
+    progress_predictions = []
+    query_features = features[video_ids == episode_index]
+    similarity_scores = query_features @ features.T
+    
+    # 排除自身
+    if exclude_self:
+        similarity_scores.masked_fill_(video_ids.unsqueeze(0) == episode_index, float('-inf'))
+    
+    query_progress_gts = progress_gts[video_ids == episode_index]
+    
+    for i in range(len(query_features)):
+        mask_i = (progress_gts < query_progress_gts[i] - window) | (progress_gts > query_progress_gts[i] + window)
+        if not torch.any(~mask_i):
+            continue
+        all_similarities_i = similarity_scores[i]
+        all_similarities_i.masked_fill_(mask_i, float('-inf'))
+        _, top_idxs = torch.topk(all_similarities_i, min(top_n, (~mask_i).sum().item()))
+        top_progress_gts = progress_gts[top_idxs]
+        progress_predictions.append(top_progress_gts.mean().item())
+        del mask_i, top_idxs, top_progress_gts, all_similarities_i
+        torch.cuda.empty_cache()
+    del query_features, similarity_scores, query_progress_gts
+    return progress_predictions, episode_index
+        
+
+
+def run_gpu_worker(gpu_id: int, worker_id: int, features: torch.Tensor, progress_gts: torch.Tensor, 
+                   video_ids: torch.Tensor, tasks: List[Tuple], result_queue: mp.Queue, exclude_self: bool = True):
+    """
+    GPU worker进程：初始化GPU数据后处理分配的任务
+    
+    Args:
+        gpu_id: GPU编号
+        worker_id: 该GPU上的worker编号
+        features: CPU共享内存中的features
+        progress_gts: progress ground truth
+        video_ids: video ids
+        tasks: 该worker需要处理的任务列表 [(episode_index, top_n, window), ...]
+        result_queue: 结果队列
+    """
+    # 初始化GPU数据（只加载一次到该GPU）
+    try:
+        worker_init_fn(gpu_id, features, progress_gts, video_ids)
+        print(f"GPU {gpu_id} Worker {worker_id}: 数据已加载到显存，分配 {len(tasks)} 个任务")
+        
+        # 处理所有分配给该worker的任务
+        for task in tasks:
+            result = process_single_episode(task, exclude_self)
+            result_queue.put(result)
+    except Exception as e:
+        print(f"GPU {gpu_id} Worker {worker_id}: 发生错误: {e}")
+        raise e
+    finally:
+        # 清理GPU显存
+        global _worker_gpu_data
+        _worker_gpu_data.clear()
+        import gc
+        gc.collect()
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        print(f"GPU {gpu_id} Worker {worker_id}: 已完成并清理显存")
+
+def write_parquet(result: Tuple, source_path: Path, chunk_size: int = 1000):
+    dst_path = source_path / "features_test"
+    data_parquet = source_path / "data"
+    progress_predictions, episode_index = result
+    old_parquet_path = data_parquet / f"chunk-{episode_index//chunk_size:03d}" / f"episode_{episode_index:06d}.parquet"
+    new_parquet_path = dst_path / f"chunk-{episode_index//chunk_size:03d}" / f"episode_{episode_index:06d}.parquet"
+    df = pd.read_parquet(old_parquet_path)
+    df['progress_predicted'] = progress_predictions
+    if not new_parquet_path.parent.exists():
+        new_parquet_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(new_parquet_path, index=False)
+
+def main(workers_per_gpu: int = 1, user_args: argparse.Namespace = None):
+    """
+    Args:
+        workers_per_gpu: 每个GPU上的worker进程数量，默认为1
+    """
+    source_path = Path(user_args.source_path)
+    shared_store = init_shared_store(source_path)
+    features = shared_store.features
+    video_ids = shared_store.video_ids
+    progress_gts = shared_store.progress_gt
+    
+    # 将tensor放入共享内存
+    video_ids.share_memory_() 
+    progress_gts.share_memory_()
+
+    
+    window = user_args.window
+    episode_indexes = list(set(video_ids.tolist()))
+    episode_indexes.sort()
+    top_n = len(episode_indexes) if user_args.top_n < 0 else user_args.top_n
+    
+    # 获取可用GPU数量
+    num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    print(f"可用GPU数量: {num_gpus}")
+    print(f"每GPU进程数: {workers_per_gpu}")
+    print(f"任务数量: {len(episode_indexes)}")
+    
+    mp.set_start_method('spawn', force=True)
+    
+    # 创建任务列表 (不再包含features等大数据)
+    all_tasks = [(episode_index, top_n, window) for episode_index in episode_indexes]
+    
+    if num_gpus > 0:
+        # 多GPU模式：每个GPU启动多个worker进程
+        total_workers = num_gpus * workers_per_gpu
+        
+        # 将任务分配给各个worker (轮询分配)
+        worker_tasks = [[] for _ in range(total_workers)]
+        for idx, task in enumerate(all_tasks):
+            worker_tasks[idx % total_workers].append(task)
+        
+        # 结果队列
+        result_queue = mp.Queue()
+        
+        # 启动每个GPU的多个worker进程
+        workers = []
+        for gpu_id in range(num_gpus):
+            for worker_idx in range(workers_per_gpu):
+                global_worker_id = gpu_id * workers_per_gpu + worker_idx
+                p = mp.Process(
+                    target=run_gpu_worker,
+                    args=(gpu_id, worker_idx, features, progress_gts, video_ids, 
+                          worker_tasks[global_worker_id], result_queue, user_args.exclude_self)
+                )
+                p.start()
+                workers.append(p)
+        
+        print(f"共启动 {total_workers} 个worker进程")
+        
+        # 收集结果并显示进度
+        results = []
+        with tqdm(total=len(all_tasks), desc="Processing episodes") as pbar:
+            while len(results) < len(all_tasks):
+                result = result_queue.get()
+                results.append(result)
+                pbar.update(1)
+                write_parquet(result, source_path, chunk_size=user_args.chunk_size)
+        
+        # 等待所有worker完成
+        for p in workers:
+            p.join()
+    else:
+        # CPU模式：使用进程池
+        process_count = os.cpu_count()
+        print(f"CPU模式，进程数量: {process_count}")
+        
+        # CPU模式下需要在每个进程初始化数据
+        def cpu_worker_init():
+            worker_init_fn(None, features, progress_gts, video_ids)
+        
+        results = []
+        with mp.Pool(processes=process_count, initializer=cpu_worker_init) as pool:
+            for result in tqdm(pool.imap_unordered(process_single_episode, all_tasks), 
+                              total=len(all_tasks), 
+                              desc="Processing episodes"):
+                results.append(result)
+                write_parquet(result, source_path, chunk_size=user_args.chunk_size)
+
+    print(f"处理完成，共 {len(results)} 个episode")
+
+def build_parsers():
+    parser = argparse.ArgumentParser(description="优化Progress预测")
+    parser.add_argument("--workers_per_gpu", type=int, default=1, help="每个GPU上的worker进程数量")
+    parser.add_argument("--source_path", type=str, default="/cpfs01/shared/kai05_data/kai0_data/short_sleeve/flatten_fold/v9-3/v9-3_0108_4556", help="数据集路径")
+    parser.add_argument("--time_range", type=float, default=None, help="时间窗口")
+    parser.add_argument("--window", type=float, default=0.3, help="时间窗口")
+    parser.add_argument("--top_n", type=int, default=-1, help="top-n匹配数")
+    parser.add_argument("--exclude_self", action="store_true", help="是否排除自身")
+    parser.add_argument("--chunk_size", type=int, default=1000, help="parquet chunk大小")
+    # parser.add_argument("--camera_keys", type=str, nargs="+", default=None, help="要使用的相机列表")
+    return parser.parse_args()
+if __name__ == "__main__":
+    args = build_parsers()
+    if args.time_range is not None:
+        args.window = args.time_range / 2 
+    main(workers_per_gpu=args.workers_per_gpu, user_args=args)
+
+
+
+
+
