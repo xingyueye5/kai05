@@ -183,18 +183,37 @@ def process_single_episode(args: Tuple, exclude_self: bool = True):
     
     query_progress_gts = progress_gts[video_ids == episode_index]
     
-    for i in range(len(query_features)):
-        mask_i = (progress_gts < query_progress_gts[i] - window) | (progress_gts > query_progress_gts[i] + window)
-        if not torch.any(~mask_i):
-            continue
-        all_similarities_i = similarity_scores[i]
-        all_similarities_i.masked_fill_(mask_i, float('-inf'))
-        _, top_idxs = torch.topk(all_similarities_i, min(top_n, (~mask_i).sum().item()))
-        top_progress_gts = progress_gts[top_idxs]
-        progress_predictions.append(top_progress_gts.mean().item())
-        del mask_i, top_idxs, top_progress_gts, all_similarities_i
-        torch.cuda.empty_cache()
-    del query_features, similarity_scores, query_progress_gts
+    # 向量化计算：避免Python for循环
+    num_query = len(query_features)
+    
+    # 构建所有帧的mask矩阵 [num_query, num_all_frames]
+    # mask_i = (progress_gts < query_progress_gts[i] - window) | (progress_gts > query_progress_gts[i] + window)
+    lower_bounds = query_progress_gts.unsqueeze(1) - window  # [num_query, 1]
+    upper_bounds = query_progress_gts.unsqueeze(1) + window  # [num_query, 1]
+    progress_gts_expanded = progress_gts.unsqueeze(0)  # [1, num_all_frames]
+    
+    # [num_query, num_all_frames]
+    mask_matrix = (progress_gts_expanded < lower_bounds) | (progress_gts_expanded > upper_bounds)
+    
+    # 应用mask到similarity_scores
+    similarity_scores_masked = similarity_scores
+    similarity_scores_masked.masked_fill_(mask_matrix, float('-inf'))
+    
+    # 批量topk
+    actual_top_n = min(top_n, similarity_scores.shape[1])
+    _, top_indices = torch.topk(similarity_scores_masked, actual_top_n, dim=1)  # [num_query, top_n]
+    
+    # 获取top progress_gts并计算均值
+    top_progress_values = progress_gts[top_indices]  # [num_query, top_n]
+    
+    # 处理无效值（全是-inf的行）
+    valid_mask = ~torch.all(similarity_scores_masked == float('-inf'), dim=1)
+    predictions = top_progress_values.mean(dim=1)  # [num_query]
+    
+    # 只保留有效预测
+    progress_predictions = predictions[valid_mask].tolist()
+    
+    del query_features, similarity_scores, query_progress_gts, mask_matrix, similarity_scores_masked
     return progress_predictions, episode_index
         
 
