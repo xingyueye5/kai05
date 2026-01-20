@@ -69,7 +69,7 @@ class SharedFeatureStore:
         print(f"   - 共享内存状态: {self._features.is_shared()}")
     
     @property
-    def features(self) -> Dict[str, torch.Tensor]:
+    def features(self) -> torch.Tensor:
         """CPU共享内存中的features（所有进程共享）"""
         return self._features
     
