@@ -15,7 +15,7 @@ fi
 
 START_EPISODE=$1
 END_EPISODE=$2
-DATASET_PATH=${3:-/cpfs01/shared/kai05_data/short_sleeve/flatten_fold/v9-3/v9-3_0108_4556}
+DATASET_PATH=${3:-/cpfs01/shared/kai05_data/kai0_data/short_sleeve/flatten_fold/v9-3/v9-3_0108_4556}
 
 cd /cpfs01/user/zhaolirui/Kai05-VLA
 
@@ -30,7 +30,7 @@ for ((episode=START_EPISODE; episode<=END_EPISODE; episode++)); do
     echo "正在处理 episode $episode / $END_EPISODE"
     echo "========================================"
     
-    python 03_visualize_progress.py \
+    python 02-1_visualize_progress.py \
         "$DATASET_PATH" \
         --episode "$episode"
 done

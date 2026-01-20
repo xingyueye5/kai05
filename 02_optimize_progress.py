@@ -306,7 +306,7 @@ def run_gpu_worker(gpu_id: int, worker_id: int, features: Dict[str, torch.Tensor
         print(f"GPU {gpu_id} Worker {worker_id}: 已完成并清理显存")
 
 def write_parquet(result: Tuple, source_path: Path, chunk_size: int = 1000):
-    dst_path = source_path / "progress_predictions"
+    dst_path = source_path / "progress_predicted"
     data_parquet = source_path / "data"
     progress_predictions, episode_index = result
     old_parquet_path = data_parquet / f"chunk-{episode_index//chunk_size:03d}" / f"episode_{episode_index:06d}.parquet"
