@@ -1,339 +1,429 @@
 """
-基于SigLIP特征的视频帧Progress预测工具（矩阵版 - 极简）
+每次加载一对视频，计算其中任意两帧之间的相似性，之后将对应序列压入限制大小的小顶堆，最后将堆中平均similarity作为预测结果
 
-功能：
-1. 直接加载合并后的大矩阵 F_all[M, D] 和 progress_gt[M]
-2. 一次性计算所有帧之间的相似度（完全向量化）
-3. 多相机融合预测 progress
-4. 结果保存到 parquet
-
-输入数据格式（来自 01_merge_features.py 合并后的特征文件）:
-    {
-        "features": tensor[M, D],       # 所有视频帧拼成的大矩阵
-        "video_ids": tensor[M],         # 每帧对应的视频索引 (int64)
-        "frame_indices": tensor[M],     # 每帧在原视频中的帧索引 (int64)
-        "progress_gt": tensor[M],       # 每帧的 progress_gt (0-1)
-        "video_names": list[str],       # 视频名称列表
-    }
-
-使用示例：
-python script.py /path/to/dataset --top_n 5
+多进程共享版本：
+- 只从硬盘读取一次数据到CPU共享内存
+- 支持多个GPU各自从共享内存获取数据
+- 每个GPU进程可以独立工作
 """
-
 import torch
+import torch.multiprocessing as mp
 import numpy as np
-from typing import List, Dict, Tuple
+from typing import Any, List, Dict, Tuple, Optional
 from pathlib import Path
 from tqdm import tqdm
 import argparse
-from dataclasses import dataclass
 import pandas as pd
+import os
+import time
 
-
-@dataclass
-class ProgressPrediction:
-    """Progress预测结果"""
-    query_frame_idx: int
-    query_progress_gt: float
-    predicted_progress: float
-    top_n_matches: List[Tuple[str, int, float, float]]  # [(episode_id, frame_idx, similarity, progress_gt), ...]
-
-
-def get_available_merged_cameras(features_dir: Path) -> List[str]:
-    """获取可用的合并特征文件对应的相机列表"""
-    cameras = []
-    for f in features_dir.glob("features_merged_*.pt"):
-        camera_key = f.stem.replace("features_merged_", "")
-        cameras.append(camera_key)
-    return cameras
-
-
-def get_parquet_path(dataset_path: Path, episode_id: str, chunk_size: int = 1000) -> Path:
-    """根据 episode_id 计算 parquet 文件路径"""
-    episode_idx = int(episode_id.split('_')[1])
-    chunk_idx = episode_idx // chunk_size
-    return dataset_path / "data" / f"chunk-{chunk_idx:03d}" / f"{episode_id}.parquet"
-
-
-def load_merged_features(features_dir: Path, camera_key: str) -> Dict:
+class SharedFeatureStore:
     """
-    加载合并后的特征文件
+    共享特征存储器
+    - 只从硬盘读取一次数据到CPU共享内存
+    - 多个GPU进程可以各自获取数据副本
+    """
     
-    Returns:
-        {
-            "features": tensor[M, D],
-            "video_ids": tensor[M],
-            "frame_indices": tensor[M],
-            "progress_gt": tensor[M],
-            "video_names": list[str],
+    def __init__(self, source_path: Path, camera_keys: List[str]):
+        """
+        初始化并加载数据到CPU共享内存（只读一次硬盘）
+        
+        Args:
+            source_path: 特征文件路径
+        """
+        print(f"从硬盘加载特征数据...")
+        t0 = time.time()
+        
+        # 只读一次硬盘
+        try:
+            features_all = [
+                torch.load(
+                    source_path / 'features' / f'features_merged_{camera_key}.pt',
+                    map_location='cpu',
+                    weights_only=False
+                    ) for camera_key in camera_keys
+            ]
+        except Exception as e:
+            print(f"加载特征数据失败: {e}")
+            raise e
+        # 加载第一个相机特征文件的元数据
+        self._video_ids = features_all[0]["video_ids"]
+        self._frame_indices = features_all[0]["frame_indices"]
+        self._progress_gt = features_all[0]["progress_gt"]
+        self._video_names = features_all[0]["video_names"]
+
+        for i in range(len(camera_keys)):
+            assert torch.equal(self._video_ids, features_all[i]["video_ids"]), f"video_ids不一致: {camera_keys[i]}，请确保所有相机特征文件的video_ids一致"
+            assert torch.equal(self._frame_indices, features_all[i]["frame_indices"]), f"frame_indices不一致: {camera_keys[i]}，请确保所有相机特征文件的frame_indices一致"
+            assert torch.equal(self._progress_gt, features_all[i]["progress_gt"]), f"progress_gt不一致: {camera_keys[i]}，请确保所有相机特征文件的progress_gt一致"
+            assert self._video_names == features_all[i]["video_names"], f"video_names不一致: {camera_keys[i]}，请确保所有相机特征文件的video_names一致"
+        # 存储所有数据
+        self._features: torch.Tensor = torch.cat([features_all[i]["features"] for i in range(len(camera_keys))], dim=1)
+        del features_all
+        
+        # 将tensor放入CPU共享内存，多进程可直接访问
+        self._features.share_memory_()
+        
+        print(f"数据加载完成，耗时: {time.time() - t0:.2f}s")
+        print(f'   - features shape: {self._features.shape}, dtype: {self._features.dtype}')
+        print(f"   - 共享内存状态: {self._features.is_shared()}")
+    
+    @property
+    def features(self) -> torch.Tensor:
+        """CPU共享内存中的features（所有进程共享）"""
+        return self._features
+    
+    @property
+    def video_ids(self):
+        return self._video_ids
+    
+    @property
+    def frame_indices(self):
+        return self._frame_indices
+    
+    @property
+    def progress_gt(self):
+        return self._progress_gt
+    
+    @property
+    def video_names(self):
+        return self._video_names
+    
+    def get_features_on_gpu(self, gpu_id: int) -> torch.Tensor:
+        """
+        获取指定GPU上的features副本
+        
+        Args:
+            gpu_id: GPU编号
+            
+        Returns:
+            该GPU上的features张量
+        """
+        device = torch.device(f'cuda:{gpu_id}')
+        return self._features.to(device)
+    
+    def get_all(self) -> Dict[str, Any]:
+        """获取所有共享数据"""
+        return {
+            "features": self._features,
+            "video_ids": self._video_ids,
+            "frame_indices": self._frame_indices,
+            "progress_gt": self._progress_gt,
+            "video_names": self._video_names,
         }
-    """
-    merged_file = features_dir / f"features_merged_{camera_key}.pt"
-    return torch.load(merged_file, map_location='cpu', weights_only=False)
 
 
-def predict_progress_per_episode(
-    dataset_path: Path,
-    camera_keys: List[str],
-    top_n: int = 5,
-    batch_size: int = 256,
-    device: str = 'cuda',
-    time_range: float = 1.0,
-    exclude_self: bool = True,
-    chunk_size: int = 1000,
-    verbose: bool = True
-):
+# 全局共享存储（用于多进程访问）
+_shared_store: Optional[SharedFeatureStore] = None
+
+# Worker进程的全局GPU数据缓存
+_worker_gpu_data: Dict[str, Any] = {}
+
+
+def init_shared_store(source_path: Path, camera_keys: List[str]) -> SharedFeatureStore:
     """
-    逐 episode 计算并保存预测结果，避免内存爆炸
-    
-    计算完一个 episode 的所有帧后，立即保存到 parquet 并释放内存
+    初始化全局共享存储（在主进程中调用一次）
     """
-    features_dir = dataset_path / "features"
-    output_base_dir = dataset_path / "progress_predicted"
+    global _shared_store
+    if _shared_store is None:
+        _shared_store = SharedFeatureStore(source_path, camera_keys)
+    return _shared_store
+
+
+def get_shared_store() -> SharedFeatureStore:
+    """获取全局共享存储"""
+    global _shared_store
+    if _shared_store is None:
+        raise RuntimeError("共享存储未初始化，请先调用 init_shared_store()")
+    return _shared_store
+
+
+def worker_init_fn(gpu_id: int, features: torch.Tensor, progress_gts: torch.Tensor, video_ids: torch.Tensor):
+    """
+    Worker进程初始化函数
+    在worker启动时将数据加载到对应GPU，后续该worker的所有任务共享这份GPU数据
     
-    # ============ 加载所有相机特征到 GPU 并获取元数据 ============
-    if verbose:
-        print(f"\n加载 {len(camera_keys)} 个相机的特征...")
+    Args:
+        gpu_id: 该worker使用的GPU编号
+        features: CPU共享内存中的features
+        progress_gts: progress ground truth
+        video_ids: video ids
+    """
+    global _worker_gpu_data
     
-    all_camera_features = []
-    for camera_key in camera_keys:
-        if verbose:
-            print(f"  加载 {camera_key} 特征...")
-        camera_data = load_merged_features(features_dir, camera_key)
-        if len(all_camera_features) == 0:
-            video_names = camera_data["video_names"]
-            video_ids = camera_data["video_ids"]
-            frame_indices = camera_data["frame_indices"]
-            progress_gt = camera_data["progress_gt"]
-            M, D = camera_data["features"].shape
-            
-            if verbose:
-                print(f"  总帧数 M: {M}, 特征维度 D: {D}")
-                print(f"  视频数量: {len(video_names)}")
-            
-            top_n_actual = min(top_n, M)
-        all_camera_features.append(camera_data["features"])
-        del camera_data
-    
-    # 将特征移到 GPU
-    if device == 'cuda' and torch.cuda.is_available():
-        all_camera_features = [f.to(device) for f in all_camera_features]
-        gpu_video_ids = video_ids.to(device)
-        gpu_progress_gt = progress_gt.to(device)
+    if gpu_id is not None and torch.cuda.is_available():
+        torch.cuda.set_device(gpu_id)
+        device = torch.device(f'cuda:{gpu_id}')
+        # 将数据加载到GPU并缓存
+        _worker_gpu_data['features'] = features.to(device)
+        _worker_gpu_data['progress_gts'] = progress_gts.to(device)
+        _worker_gpu_data['video_ids'] = video_ids.to(device)
+        _worker_gpu_data['device'] = device
+        _worker_gpu_data['gpu_id'] = gpu_id
     else:
-        gpu_video_ids = video_ids
-        gpu_progress_gt = progress_gt
+        # CPU模式
+        _worker_gpu_data['features'] = features
+        _worker_gpu_data['progress_gts'] = progress_gts
+        _worker_gpu_data['video_ids'] = video_ids
+        _worker_gpu_data['device'] = torch.device('cpu')
+        _worker_gpu_data['gpu_id'] = None
+
+
+def process_single_episode(args: Tuple, exclude_self_episode: bool = True, exclude_self_frame_value: bool = True, query_chunk_size: int = 128):
+    """
+    处理单个episode
+    使用worker进程初始化时缓存的GPU数据
+    分块处理以避免显存溢出
     
-    half_range = time_range / 2 if time_range < 1.0 else None
+    Args:
+        args: (episode_index, top_n, window)
+    """
+    global _worker_gpu_data
     
-    # ============ 构建每个 episode 的帧索引范围 ============
-    video_ids_np = video_ids.numpy()
-    frame_indices_np = frame_indices.numpy()
-    progress_gt_np = progress_gt.numpy()
+    episode_index, top_n, window = args
     
-    # 找到每个 episode 在大矩阵中的起止索引
-    episode_ranges = {}  # {episode_id: [global_idx1, global_idx2, ...]}
-    for global_idx in range(M):
-        vid_idx = video_ids_np[global_idx]
-        ep_id = video_names[vid_idx]
-        if ep_id not in episode_ranges:
-            episode_ranges[ep_id] = []
-        episode_ranges[ep_id].append(global_idx)
+    # 使用worker初始化时缓存的GPU数据
+    features = _worker_gpu_data['features']
+    progress_gts = _worker_gpu_data['progress_gts']
+    video_ids = _worker_gpu_data['video_ids']
     
-    if verbose:
-        print(f"\n逐 episode 计算并保存 (共 {len(episode_ranges)} 个 episode)...")
+    query_mask = video_ids == episode_index
+    query_features = features[query_mask]
+    query_progress_gts = progress_gts[query_mask]
+    num_query = len(query_features)
     
-    # ============ 统计变量 ============
-    total_mae, total_rmse = [], []
-    total_processed = 0
+    if num_query == 0:
+        return [], episode_index
     
-    # ============ 逐 episode 处理 ============
-    for episode_id in tqdm(episode_ranges.keys(), desc="处理 episode", disable=not verbose):
-        ep_global_indices = episode_ranges[episode_id]
-        ep_global_indices = sorted(ep_global_indices)  # 确保顺序
-        
-        # 为当前 episode 的帧分批计算 top-n
-        ep_results = []
-        
-        for i in range(0, len(ep_global_indices), batch_size):
-            batch_global_indices = ep_global_indices[i:i + batch_size]
-            batch_len = len(batch_global_indices)
-            batch_indices_tensor = torch.tensor(batch_global_indices, dtype=torch.long, device=device if device == 'cuda' and torch.cuda.is_available() else 'cpu')
-            
-            # 多相机融合相似度
-            batch_sim = torch.zeros(batch_len, M, device=all_camera_features[0].device)
-            for features in all_camera_features:
-                batch_feat = features[batch_indices_tensor]
-                sim = torch.mm(batch_feat, features.t())
-                batch_sim += sim
-            batch_sim = batch_sim / len(camera_keys)
-            
-            # 应用 exclude_self 掩码
-            if exclude_self:
-                batch_vids = gpu_video_ids[batch_indices_tensor]
-                same_mask = batch_vids.unsqueeze(1) == gpu_video_ids.unsqueeze(0)
-                batch_sim.masked_fill_(same_mask, float('-inf'))
-            
-            # 应用 time_range 掩码
-            if half_range is not None:
-                batch_prog = gpu_progress_gt[batch_indices_tensor]
-                time_mask = (gpu_progress_gt.unsqueeze(0) < batch_prog.unsqueeze(1) - half_range) | \
-                            (gpu_progress_gt.unsqueeze(0) > batch_prog.unsqueeze(1) + half_range)
-                batch_sim.masked_fill_(time_mask, float('-inf'))
-            
-            # 取 Top-n
-            top_vals, top_idxs = torch.topk(batch_sim, top_n_actual, dim=1)
-            top_vals = top_vals.cpu().numpy()
-            top_idxs = top_idxs.cpu().numpy()
-            
-            # 立即构建该 batch 的预测结果
-            for j, global_idx in enumerate(batch_global_indices):
-                query_frame_idx = frame_indices_np[global_idx]
-                query_gt = progress_gt_np[global_idx]
-                
-                progress_values = []
-                top_n_matches = []
-                
-                for k in range(top_n_actual):
-                    db_idx = top_idxs[j, k]
-                    similarity = top_vals[j, k]
-                    
-                    if similarity == float('-inf'):
-                        continue
-                    
-                    db_vid_idx = video_ids_np[db_idx]
-                    db_ep_id = video_names[db_vid_idx]
-                    db_frame_idx = frame_indices_np[db_idx]
-                    db_prog_gt = progress_gt_np[db_idx]
-                    
-                    top_n_matches.append((db_ep_id, int(db_frame_idx), float(similarity), float(db_prog_gt)))
-                    progress_values.append(db_prog_gt)
-                
-                progress_values.append(query_gt)
-                predicted_progress = float(np.mean(progress_values))
-                
-                pred = ProgressPrediction(
-                    query_frame_idx=int(query_frame_idx),
-                    query_progress_gt=float(query_gt),
-                    predicted_progress=predicted_progress,
-                    top_n_matches=top_n_matches
-                )
-                ep_results.append(pred)
-            
-            # 释放临时变量
-            del batch_sim, top_vals, top_idxs
-        
-        # ============ 立即保存该 episode 的结果 ============
-        parquet_path = get_parquet_path(dataset_path, episode_id, chunk_size)
-        
-        # 计算误差
-        errors = [abs(r.predicted_progress - r.query_progress_gt) for r in ep_results]
-        total_mae.append(np.mean(errors))
-        total_rmse.append(np.sqrt(np.mean([e**2 for e in errors])))
-        
-        # 保存到 parquet
-        chunk_name = parquet_path.parent.name
-        output_chunk_dir = output_base_dir / chunk_name
-        output_chunk_dir.mkdir(parents=True, exist_ok=True)
-        save_predictions_to_parquet(ep_results, parquet_path, output_chunk_dir / f"{episode_id}.parquet")
-        
-        total_processed += 1
-        
-        # 释放该 episode 的结果内存
-        del ep_results
+    # 分块处理参数：控制每次处理的query帧数
+    # 30%显存使用率 -> 可增大chunk_size提升并行度
+    # 设置为128，约占用90%显存
+    chunk_size = query_chunk_size
     
-    # 释放 GPU 内存
-    del all_camera_features
-    if device == 'cuda':
+    all_predictions = []
+    all_valid_mask = []
+    
+    # 预先计算用于排除自身的mask（只计算一次）
+    if exclude_self_episode:
+        self_mask = video_ids == episode_index  # [num_all_frames]
+    
+    for chunk_start in range(0, num_query, chunk_size):
+        chunk_end = min(chunk_start + chunk_size, num_query)
+        chunk_query_features = query_features[chunk_start:chunk_end]
+        chunk_query_progress = query_progress_gts[chunk_start:chunk_end]
+        
+        # 计算当前chunk的相似度 [chunk_num, num_all_frames]
+        similarity_scores = chunk_query_features @ features.T
+        del chunk_query_features
+        
+        # 排除自身（使用预计算的mask）
+        if exclude_self_episode:
+            similarity_scores.masked_fill_(self_mask.unsqueeze(0), float('-inf'))
+        
+        # 向量化mask计算（比逐行处理快得多）
+        # lower_bounds, upper_bounds: [chunk_num, 1]
+        # progress_gts: [1, num_all_frames] -> broadcast to [chunk_num, num_all_frames]
+        lower_bounds = (chunk_query_progress - window).unsqueeze(1)
+        upper_bounds = (chunk_query_progress + window).unsqueeze(1)
+        progress_gts_exp = progress_gts.unsqueeze(0)
+        
+        # 创建并应用mask（向量化操作）
+        mask_matrix = (progress_gts_exp < lower_bounds) | (progress_gts_exp > upper_bounds)
+        similarity_scores.masked_fill_(mask_matrix, float('-inf'))
+        del lower_bounds, upper_bounds, progress_gts_exp, mask_matrix
+        
+        # 处理无效值（全是-inf的行）
+        valid_mask = ~torch.all(similarity_scores == float('-inf'), dim=1)
+        
+        # 批量topk
+        actual_top_n = min(top_n, similarity_scores.shape[1])
+        _, top_indices = torch.topk(similarity_scores, actual_top_n, dim=1)
+        del similarity_scores
+        
+        # 获取top progress_gts并计算均值
+        top_progress_values = progress_gts[top_indices]
+        del top_indices
+        
+        predictions = top_progress_values.mean(dim=1)
+        del top_progress_values
+        
+        all_predictions.append(predictions)
+        all_valid_mask.append(valid_mask)
+    
+    # 合并所有chunk的结果
+    all_predictions = torch.cat(all_predictions, dim=0)
+    if not exclude_self_frame_value:
+        all_predictions = (all_predictions*actual_top_n + query_progress_gts) / (actual_top_n + 1)
+    all_valid_mask = torch.cat(all_valid_mask, dim=0)
+    
+    # 只保留有效预测
+    progress_predictions = all_predictions[all_valid_mask].tolist()
+    del all_predictions, all_valid_mask, query_features, query_progress_gts
+    
+    torch.cuda.empty_cache()
+    return progress_predictions, episode_index
+        
+
+
+def run_gpu_worker(gpu_id: int, worker_id: int, features: Dict[str, torch.Tensor], progress_gts: torch.Tensor, 
+                   video_ids: torch.Tensor, tasks: List[Tuple], result_queue: mp.Queue, 
+                   exclude_self_episode: bool = True, exclude_self_frame_value: bool = True, query_chunk_size: int = 128):
+    """
+    GPU worker进程：初始化GPU数据后处理分配的任务
+    
+    Args:
+        gpu_id: GPU编号
+        worker_id: 该GPU上的worker编号
+        features: CPU共享内存中的features, Dict[str, torch.Tensor]
+        progress_gts: progress ground truth, torch.Tensor
+        video_ids: video ids
+        tasks: 该worker需要处理的任务列表 [(episode_index, top_n, window), ...]
+        result_queue: 结果队列
+        exclude_self_episode: 是否排除自身episode
+        exclude_self_frame_value: 是否排除自身frame 的progress_gt value
+        query_chunk_size: query chunk大小
+    """
+    # 初始化GPU数据（只加载一次到该GPU）
+    try:
+        worker_init_fn(gpu_id, features, progress_gts, video_ids)
+        print(f"GPU {gpu_id} Worker {worker_id}: 数据已加载到显存，分配 {len(tasks)} 个任务")
+        
+        # 处理所有分配给该worker的任务
+        for task in tasks:
+            result = process_single_episode(task, exclude_self_episode, exclude_self_frame_value, query_chunk_size)
+            result_queue.put(result)
+    except Exception as e:
+        print(f"GPU {gpu_id} Worker {worker_id}: 发生错误: {e}")
+        raise e
+    finally:
+        # 清理GPU显存
+        global _worker_gpu_data
+        _worker_gpu_data.clear()
+        import gc
+        gc.collect()
         torch.cuda.empty_cache()
-    
-    # 返回统计结果
-    return total_processed, total_mae, total_rmse
+        torch.cuda.synchronize()
+        print(f"GPU {gpu_id} Worker {worker_id}: 已完成并清理显存")
 
+def write_parquet(result: Tuple, source_path: Path, chunk_size: int = 1000):
+    dst_path = source_path / "progress_predictions"
+    data_parquet = source_path / "data"
+    progress_predictions, episode_index = result
+    old_parquet_path = data_parquet / f"chunk-{episode_index//chunk_size:03d}" / f"episode_{episode_index:06d}.parquet"
+    new_parquet_path = dst_path / f"chunk-{episode_index//chunk_size:03d}" / f"episode_{episode_index:06d}.parquet"
+    df = pd.read_parquet(old_parquet_path)
+    df['progress_predicted'] = progress_predictions
+    if not new_parquet_path.parent.exists():
+        new_parquet_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(new_parquet_path, index=False)
 
-def save_predictions_to_parquet(
-    results: List[ProgressPrediction],
-    original_parquet_path: Path,
-    output_parquet_path: Path,
-):
-    """将预测结果保存到新的parquet文件"""
-    df = pd.read_parquet(original_parquet_path)
+def main(workers_per_gpu: int = 1, user_args: argparse.Namespace = None):
+    """
+    Args:
+        workers_per_gpu: 每个GPU上的worker进程数量，默认为1
+    """
+    source_path = Path(user_args.source_path)
+    shared_store = init_shared_store(source_path, user_args.camera_keys)
+    features = shared_store.features
+    video_ids = shared_store.video_ids
+    progress_gts = shared_store.progress_gt
     
-    predicted_progress = {r.query_frame_idx: r.predicted_progress for r in results}
+    # 将tensor放入共享内存
+    video_ids.share_memory_() 
+    progress_gts.share_memory_()
+
     
-    if 'frame_index' in df.columns:
-        df['progress_predicted'] = df['frame_index'].map(predicted_progress)
+    window = user_args.window
+    episode_indexes = list(set(video_ids.tolist()))
+    episode_indexes.sort()
+    top_n = len(episode_indexes) if user_args.top_n <= 0 else user_args.top_n
+    
+    # 获取可用GPU数量
+    num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    print(f"可用GPU数量: {num_gpus}")
+    print(f"每GPU进程数: {workers_per_gpu}")
+    print(f"任务数量: {len(episode_indexes)}")
+    
+    mp.set_start_method('spawn', force=True)
+    
+    # 创建任务列表 (不再包含features等大数据)
+    all_tasks = [(episode_index, top_n, window) for episode_index in episode_indexes]
+    
+    if num_gpus > 0:
+        # 多GPU模式：每个GPU启动多个worker进程
+        total_workers = num_gpus * workers_per_gpu
+        
+        # 将任务分配给各个worker (轮询分配)
+        worker_tasks = [[] for _ in range(total_workers)]
+        for idx, task in enumerate(all_tasks):
+            worker_tasks[idx % total_workers].append(task)
+        
+        # 结果队列
+        result_queue = mp.Queue()
+        
+        # 启动每个GPU的多个worker进程
+        workers = []
+        for gpu_id in range(num_gpus):
+            for worker_idx in range(workers_per_gpu):
+                global_worker_id = gpu_id * workers_per_gpu + worker_idx
+                p = mp.Process(
+                    target=run_gpu_worker,
+                    args=(gpu_id, worker_idx, features, progress_gts, video_ids, 
+                          worker_tasks[global_worker_id], result_queue, user_args.exclude_self_episode, 
+                          user_args.exclude_self_frame_value, user_args.query_chunk_size)
+                )
+                p.start()
+                workers.append(p)
+        
+        print(f"共启动 {total_workers} 个worker进程")
+        
+        # 收集结果并显示进度
+        results = []
+        with tqdm(total=len(all_tasks), desc="Processing episodes") as pbar:
+            while len(results) < len(all_tasks):
+                result = result_queue.get()
+                results.append(result)
+                pbar.update(1)
+                write_parquet(result, source_path, chunk_size=user_args.chunk_size)
+        
+        # 等待所有worker完成
+        for p in workers:
+            p.join()
     else:
-        df['progress_predicted'] = df.index.map(lambda i: predicted_progress.get(i))
-    
-    output_parquet_path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(output_parquet_path, index=False)
+        # CPU模式：使用进程池
+        process_count = os.cpu_count()
+        print(f"CPU模式，进程数量: {process_count}")
+        
+        # CPU模式下需要在每个进程初始化数据
+        def cpu_worker_init():
+            worker_init_fn(None, features, progress_gts, video_ids)
+        
+        results = []
+        with mp.Pool(processes=process_count, initializer=cpu_worker_init) as pool:
+            for result in tqdm(pool.imap_unordered(process_single_episode, all_tasks), 
+                              total=len(all_tasks), 
+                              desc="Processing episodes"):
+                results.append(result)
+                write_parquet(result, source_path, chunk_size=user_args.chunk_size)
 
+    print(f"处理完成，共 {len(results)} 个episode")
 
-def main():
-    parser = argparse.ArgumentParser(
-        description="基于SigLIP特征的视频帧Progress预测（矩阵版）",
-        epilog="示例: python script.py /path/to/dataset --top_n 5"
-    )
-    
-    parser.add_argument("dataset_path", type=str, help="数据集路径")
-    parser.add_argument("--top_n", type=int, default=5, help="top-n匹配数 (默认: 5)")
-    parser.add_argument("--top_n_all", action="store_true", help="使用所有视频作为top_n")
-    parser.add_argument("--exclude_self", action="store_true", help="排除自己这条视频")
-    parser.add_argument("--batch_size", type=int, default=256, help="批处理大小 (默认: 256)")
-    parser.add_argument("--device", type=str, default="cuda", choices=["cuda", "cpu"])
-    parser.add_argument("--time_range", type=float, default=1.0, help="时间范围限制 (0-1)")
-    parser.add_argument("--chunk_size", type=int, default=1000, help="parquet chunk大小 (默认: 1000)")
+def build_parsers():
+    parser = argparse.ArgumentParser(description="优化Progress预测")
+    parser.add_argument("--workers_per_gpu", type=int, default=1, help="每个GPU上的worker进程数量")
+    parser.add_argument("--source_path", type=str, default="/cpfs01/shared/kai05_data/kai0_data/short_sleeve/flatten_fold/v9-3/v9-3_0108_4556", help="数据集路径")
+    parser.add_argument("--time_range", type=float, default=None, help="时间窗口")
+    parser.add_argument("--window", type=float, default=0.3, help="时间窗口")
+    parser.add_argument("--top_n", type=int, default=-1, help="top-n匹配数")
+    parser.add_argument("--exclude_self_episode", action="store_true", help="是否排除自身episode")
+    parser.add_argument("--exclude_self_frame_value", action="store_true", help="是否排除自身frame value")
+    parser.add_argument("--chunk_size", type=int, default=1000, help="parquet chunk大小")
+    parser.add_argument("--query_chunk_size", type=int, default=64, help="query chunk大小")
     parser.add_argument("--camera_keys", type=str, nargs="+", default=None, help="要使用的相机列表")
-    args = parser.parse_args()
-    
-    dataset_path = Path(args.dataset_path)
-    features_dir = dataset_path / "features"
-    
-    # 获取相机列表
-    available_cameras = get_available_merged_cameras(features_dir)
-    if not available_cameras:
-        raise ValueError(f"未找到合并特征文件: {features_dir}")
-    
-    if args.camera_keys:
-        camera_keys = [c for c in args.camera_keys if c in available_cameras]
-    else:
-        camera_keys = sorted(available_cameras)
-    
-    print(f"数据集: {dataset_path.name}")
-    print(f"使用相机: {camera_keys}")
-    
-    # 计算 top_n
-    top_n = args.top_n
-    if args.top_n_all:
-        first_data = load_merged_features(features_dir, camera_keys[0])
-        top_n = len(first_data["video_names"])
-        del first_data
-        print(f"使用所有视频: top_n = {top_n}")
-    
-    # 逐 episode 计算并保存（内存友好）
-    print("\n开始逐 episode 预测并保存...")
-    total_processed, total_mae, total_rmse = predict_progress_per_episode(
-        dataset_path=dataset_path,
-        camera_keys=camera_keys,
-        top_n=top_n,
-        batch_size=args.batch_size,
-        device=args.device,
-        time_range=args.time_range,
-        exclude_self=args.exclude_self,
-        chunk_size=args.chunk_size,
-        verbose=True
-    )
-    
-    # 打印统计
-    print("\n" + "=" * 80)
-    print("处理完成!")
-    print("=" * 80)
-    print(f"  成功: {total_processed}")
-    if total_mae:
-        print(f"  平均 MAE: {np.mean(total_mae):.4f}")
-        print(f"  平均 RMSE: {np.mean(total_rmse):.4f}")
-
-
+    return parser.parse_args()
 if __name__ == "__main__":
-    main()
+    args = build_parsers()
+    # print(args)
+    if args.time_range is not None:
+        args.window = args.time_range / 2 
+    main(workers_per_gpu=args.workers_per_gpu, user_args=args)
