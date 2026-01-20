@@ -24,7 +24,7 @@ class SharedFeatureStore:
     - 多个GPU进程可以各自获取数据副本
     """
     
-    def __init__(self, source_path: Path):
+    def __init__(self, source_path: Path, camera_keys: List[str]):
         """
         初始化并加载数据到CPU共享内存（只读一次硬盘）
         
@@ -35,28 +35,41 @@ class SharedFeatureStore:
         t0 = time.time()
         
         # 只读一次硬盘
-        features_all = torch.load(
-            source_path / 'features' / 'features_merged_top_head.pt',
-            map_location='cpu',
-            weights_only=False
-        )
-        
+        try:
+            features_all = [
+                torch.load(
+                    source_path / 'features' / f'features_merged_{camera_key}.pt',
+                    map_location='cpu',
+                    weights_only=False
+                    ) for camera_key in camera_keys
+            ]
+        except Exception as e:
+            print(f"加载特征数据失败: {e}")
+            raise e
+        # 加载第一个相机特征文件的元数据
+        self._video_ids = features_all[0]["video_ids"]
+        self._frame_indices = features_all[0]["frame_indices"]
+        self._progress_gt = features_all[0]["progress_gt"]
+        self._video_names = features_all[0]["video_names"]
+
+        for i in range(len(camera_keys)):
+            assert torch.equal(self._video_ids, features_all[i]["video_ids"]), f"video_ids不一致: {camera_keys[i]}，请确保所有相机特征文件的video_ids一致"
+            assert torch.equal(self._frame_indices, features_all[i]["frame_indices"]), f"frame_indices不一致: {camera_keys[i]}，请确保所有相机特征文件的frame_indices一致"
+            assert torch.equal(self._progress_gt, features_all[i]["progress_gt"]), f"progress_gt不一致: {camera_keys[i]}，请确保所有相机特征文件的progress_gt一致"
+            assert self._video_names == features_all[i]["video_names"], f"video_names不一致: {camera_keys[i]}，请确保所有相机特征文件的video_names一致"
         # 存储所有数据
-        self._features: torch.Tensor = features_all["features"]
-        self._video_ids = features_all["video_ids"]
-        self._frame_indices = features_all["frame_indices"]
-        self._progress_gt = features_all["progress_gt"]
-        self._video_names = features_all["video_names"]
+        self._features: torch.Tensor = torch.cat([features_all[i]["features"] for i in range(len(camera_keys))], dim=1)
+        del features_all
         
         # 将tensor放入CPU共享内存，多进程可直接访问
         self._features.share_memory_()
         
         print(f"数据加载完成，耗时: {time.time() - t0:.2f}s")
-        print(f"  - features shape: {self._features.shape}, dtype: {self._features.dtype}")
-        print(f"  - 共享内存状态: {self._features.is_shared()}")
+        print(f'   - features shape: {self._features.shape}, dtype: {self._features.dtype}')
+        print(f"   - 共享内存状态: {self._features.is_shared()}")
     
     @property
-    def features(self) -> torch.Tensor:
+    def features(self) -> Dict[str, torch.Tensor]:
         """CPU共享内存中的features（所有进程共享）"""
         return self._features
     
@@ -107,13 +120,13 @@ _shared_store: Optional[SharedFeatureStore] = None
 _worker_gpu_data: Dict[str, Any] = {}
 
 
-def init_shared_store(source_path: Path) -> SharedFeatureStore:
+def init_shared_store(source_path: Path, camera_keys: List[str]) -> SharedFeatureStore:
     """
     初始化全局共享存储（在主进程中调用一次）
     """
     global _shared_store
     if _shared_store is None:
-        _shared_store = SharedFeatureStore(source_path)
+        _shared_store = SharedFeatureStore(source_path, camera_keys)
     return _shared_store
 
 
@@ -156,7 +169,7 @@ def worker_init_fn(gpu_id: int, features: torch.Tensor, progress_gts: torch.Tens
         _worker_gpu_data['gpu_id'] = None
 
 
-def process_single_episode(args: Tuple, exclude_self: bool = True, query_chunk_size: int = 128):
+def process_single_episode(args: Tuple, exclude_self_episode: bool = True, exclude_self_frame_value: bool = True, query_chunk_size: int = 128):
     """
     处理单个episode
     使用worker进程初始化时缓存的GPU数据
@@ -191,7 +204,7 @@ def process_single_episode(args: Tuple, exclude_self: bool = True, query_chunk_s
     all_valid_mask = []
     
     # 预先计算用于排除自身的mask（只计算一次）
-    if exclude_self:
+    if exclude_self_episode:
         self_mask = video_ids == episode_index  # [num_all_frames]
     
     for chunk_start in range(0, num_query, chunk_size):
@@ -201,9 +214,10 @@ def process_single_episode(args: Tuple, exclude_self: bool = True, query_chunk_s
         
         # 计算当前chunk的相似度 [chunk_num, num_all_frames]
         similarity_scores = chunk_query_features @ features.T
+        del chunk_query_features
         
         # 排除自身（使用预计算的mask）
-        if exclude_self:
+        if exclude_self_episode:
             similarity_scores.masked_fill_(self_mask.unsqueeze(0), float('-inf'))
         
         # 向量化mask计算（比逐行处理快得多）
@@ -238,6 +252,8 @@ def process_single_episode(args: Tuple, exclude_self: bool = True, query_chunk_s
     
     # 合并所有chunk的结果
     all_predictions = torch.cat(all_predictions, dim=0)
+    if not exclude_self_frame_value:
+        all_predictions = (all_predictions*actual_top_n + query_progress_gts) / (actual_top_n + 1)
     all_valid_mask = torch.cat(all_valid_mask, dim=0)
     
     # 只保留有效预测
@@ -249,19 +265,23 @@ def process_single_episode(args: Tuple, exclude_self: bool = True, query_chunk_s
         
 
 
-def run_gpu_worker(gpu_id: int, worker_id: int, features: torch.Tensor, progress_gts: torch.Tensor, 
-                   video_ids: torch.Tensor, tasks: List[Tuple], result_queue: mp.Queue, exclude_self: bool = True, query_chunk_size: int = 128):
+def run_gpu_worker(gpu_id: int, worker_id: int, features: Dict[str, torch.Tensor], progress_gts: torch.Tensor, 
+                   video_ids: torch.Tensor, tasks: List[Tuple], result_queue: mp.Queue, 
+                   exclude_self_episode: bool = True, exclude_self_frame_value: bool = True, query_chunk_size: int = 128):
     """
     GPU worker进程：初始化GPU数据后处理分配的任务
     
     Args:
         gpu_id: GPU编号
         worker_id: 该GPU上的worker编号
-        features: CPU共享内存中的features
-        progress_gts: progress ground truth
+        features: CPU共享内存中的features, Dict[str, torch.Tensor]
+        progress_gts: progress ground truth, torch.Tensor
         video_ids: video ids
         tasks: 该worker需要处理的任务列表 [(episode_index, top_n, window), ...]
         result_queue: 结果队列
+        exclude_self_episode: 是否排除自身episode
+        exclude_self_frame_value: 是否排除自身frame 的progress_gt value
+        query_chunk_size: query chunk大小
     """
     # 初始化GPU数据（只加载一次到该GPU）
     try:
@@ -270,7 +290,7 @@ def run_gpu_worker(gpu_id: int, worker_id: int, features: torch.Tensor, progress
         
         # 处理所有分配给该worker的任务
         for task in tasks:
-            result = process_single_episode(task, exclude_self, query_chunk_size)
+            result = process_single_episode(task, exclude_self_episode, exclude_self_frame_value, query_chunk_size)
             result_queue.put(result)
     except Exception as e:
         print(f"GPU {gpu_id} Worker {worker_id}: 发生错误: {e}")
@@ -286,7 +306,7 @@ def run_gpu_worker(gpu_id: int, worker_id: int, features: torch.Tensor, progress
         print(f"GPU {gpu_id} Worker {worker_id}: 已完成并清理显存")
 
 def write_parquet(result: Tuple, source_path: Path, chunk_size: int = 1000):
-    dst_path = source_path / "features_test"
+    dst_path = source_path / "progress_predictions_test"
     data_parquet = source_path / "data"
     progress_predictions, episode_index = result
     old_parquet_path = data_parquet / f"chunk-{episode_index//chunk_size:03d}" / f"episode_{episode_index:06d}.parquet"
@@ -303,7 +323,7 @@ def main(workers_per_gpu: int = 1, user_args: argparse.Namespace = None):
         workers_per_gpu: 每个GPU上的worker进程数量，默认为1
     """
     source_path = Path(user_args.source_path)
-    shared_store = init_shared_store(source_path)
+    shared_store = init_shared_store(source_path, user_args.camera_keys)
     features = shared_store.features
     video_ids = shared_store.video_ids
     progress_gts = shared_store.progress_gt
@@ -316,7 +336,7 @@ def main(workers_per_gpu: int = 1, user_args: argparse.Namespace = None):
     window = user_args.window
     episode_indexes = list(set(video_ids.tolist()))
     episode_indexes.sort()
-    top_n = len(episode_indexes) if user_args.top_n < 0 else user_args.top_n
+    top_n = len(episode_indexes) if user_args.top_n <= 0 else user_args.top_n
     
     # 获取可用GPU数量
     num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
@@ -349,7 +369,8 @@ def main(workers_per_gpu: int = 1, user_args: argparse.Namespace = None):
                 p = mp.Process(
                     target=run_gpu_worker,
                     args=(gpu_id, worker_idx, features, progress_gts, video_ids, 
-                          worker_tasks[global_worker_id], result_queue, user_args.exclude_self, user_args.query_chunk_size)
+                          worker_tasks[global_worker_id], result_queue, user_args.exclude_self_episode, 
+                          user_args.exclude_self_frame_value, user_args.query_chunk_size)
                 )
                 p.start()
                 workers.append(p)
@@ -394,13 +415,15 @@ def build_parsers():
     parser.add_argument("--time_range", type=float, default=None, help="时间窗口")
     parser.add_argument("--window", type=float, default=0.3, help="时间窗口")
     parser.add_argument("--top_n", type=int, default=-1, help="top-n匹配数")
-    parser.add_argument("--exclude_self", action="store_true", help="是否排除自身")
+    parser.add_argument("--exclude_self_episode", action="store_true", help="是否排除自身episode")
+    parser.add_argument("--exclude_self_frame_value", action="store_true", help="是否排除自身frame value")
     parser.add_argument("--chunk_size", type=int, default=1000, help="parquet chunk大小")
     parser.add_argument("--query_chunk_size", type=int, default=64, help="query chunk大小")
-    # parser.add_argument("--camera_keys", type=str, nargs="+", default=None, help="要使用的相机列表")
+    parser.add_argument("--camera_keys", type=str, nargs="+", default=None, help="要使用的相机列表")
     return parser.parse_args()
 if __name__ == "__main__":
     args = build_parsers()
+    # print(args)
     if args.time_range is not None:
         args.window = args.time_range / 2 
     main(workers_per_gpu=args.workers_per_gpu, user_args=args)
