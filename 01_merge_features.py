@@ -140,6 +140,7 @@ def merge_features(
                     episode_id, _, features = future.result()
                     episode_features[episode_id] = features
                 except Exception as e:
+                    breakpoint()
                     pt_file = futures[future]
                     print(f"警告: 加载 {pt_file} 失败: {e}")
         
@@ -155,6 +156,7 @@ def merge_features(
                 try:
                     all_progress_dicts[episode_id] = load_parquet_progress(parquet_path)
                 except Exception as e:
+                    breakpoint()
                     print(f"    警告: 加载 {parquet_path} 失败: {e}")
         
         # 构建大矩阵和 video_id 数组
