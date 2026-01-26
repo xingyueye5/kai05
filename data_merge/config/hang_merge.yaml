@@ -1,0 +1,35 @@
+source_path: # 需要进行合并的文件路径列表
+  - /mnt/data/baidx/v4/open_source/1102_21_234_v2-3_3000_lerobot
+  - /mnt/data/baidx/v4/open_source/1107_204_8_v2-3_3000_lerobot
+# 合并后数据保存路径
+dst_path: /cpfs01/shared/baidx/processed_cv
+tasks:  # 任务列表，如果为None，则合并所有任务；如果非空，则合并给定任务的数据集
+# 任务列表示例：
+  # v6-5:
+  #   task_index: 0
+  #   task: 任务描述
+  # v6-6:
+  #   task_index: 1
+  #   task: 任务描述
+  # or
+  # - v6-5
+  # - v6-6
+  # or
+  # None 或者留空
+# 任务合并信息，对于处于同一个任务列表的任务，认为这些任务是同一个任务,提供相同的task_index
+combine_task:
+  - [v2, v2-3, v2-4]
+  - [v3-5, v3-6]
+# 任务描述，若无，留空
+task_description:
+  # 示例如下
+  # v2-3: 任务1
+  # v2-4: 任务2
+  # v3-5: 任务3
+  # v3-6: 任务4
+save_method: cv # 视频保存方法，cv或av
+
+# 处理进程数,处理视频部分进程数目，实际进程数为process_count + 3，
+#多出的三个进程，分别为data_parquet_processor、episode_stats_processor和log进程
+# 如果为None，则使用cpu数；如果非空，则使用给定进程数
+process_count: 

@@ -1,0 +1,37 @@
+source_path: # 需要进行合并的文件路径列表
+  - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_A_full_process/v2-3/1102_204_141_v2-3_3000_lerobot
+  - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_A_full_process/v2-3/1111_231_281_v2-3_3000_lerobot
+  - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_A_full_process/v2-3/1103_21_182_v2-3_3000_lerobot
+  - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_A_full_process/v2-3/1110_104_503_v2-3_3000_lerobot
+  - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_A_full_process/v2-3/1105_204_281_v2-3_3000_lerobot
+  - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_A_full_process/v2-3/1106_20_40_v2-3_3000_lerobot
+  - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_A_full_process/v2-3/1106_204_271_v2-3_3000_lerobot
+  - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_A_full_process/v2-3/1107_20_260_v2-3_3000_lerobot
+  - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_A_full_process/v2-3/1107_204_8_v2-3_3000_lerobot
+  - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_A_full_process/v2-3/1112_231_280_v2-3_3000_lerobot
+  - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_A_full_process/v2-3/1102_21_234_v2-3_3000_lerobot
+  - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_A_full_process/v2-3/1111_104_493_v2-3_3000_lerobot
+  - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_A_full_process/v2-3/1113_231_116_v2-3_3000_lerobot
+  - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_A_full_process/v2-3/1103_204_270_v2-3_3000_lerobot
+  - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_A_full_process/v2-3/1104_204_245_v2-3_3000_lerobot
+  - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_A_full_process/v2-3/1110_231_261_v2-3_3000_lerobot
+  - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_A_full_process/v2-3/1103_75_282_v2-3_3000_lerobot
+  - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_A_full_process/v2-3/1104_20_205_v2-3_3000_lerobot
+  - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_A_full_process/v2-3/1105_20_261_v2-3_3000_lerobot
+  - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_A_full_process/v2-3/1112_104_508_v2-3_3000_lerobot
+  - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_A_full_process/v2-3/1113_104_325_v2-3_3000_lerobot
+  - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_A_full_process/v2-3/1114_104_211_v2-3_3000_lerobot
+  - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_A_full_process/v2-3/1108_104_291_v2-3_3000_lerobot
+# 合并后数据保存路径
+dst_path: /cpfs01/shared/filtered_data/merge_data/short_sleeve_shirt/demo_A_full_process/v2-3_0108/
+tasks:  
+combine_task:
+# 任务描述，若无，留空
+task_description:
+  v2-3: fold the cloth
+save_method: cv # 视频保存方法，cv或av
+
+# 处理进程数,处理视频部分进程数目，实际进程数为process_count + 3，
+#多出的三个进程，分别为data_parquet_processor、episode_stats_processor和log进程
+# 如果为None，则使用cpu数；如果非空，则使用给定进程数
+process_count: 14

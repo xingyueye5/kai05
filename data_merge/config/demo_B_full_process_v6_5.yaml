@@ -1,0 +1,37 @@
+source_path: # 需要进行合并的文件路径列表
+  - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_B_full_process/v6-5/1106_171_216_v6-5_1500_lerobot
+  - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_B_full_process/v6-5/1107_171_666_v6-5_1500_lerobot
+  - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_B_full_process/v6-5/1109_206_530_v6-5_1500_lerobot
+  # - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_B_full_process/v6-5/1111_206_407_v6-5_1500_lerobot
+  # - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_B_full_process/v6-5/1108_206_223_v6-5_1500_lerobot
+  # - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_B_full_process/v6-5/1105_171_391_v6-5_1500_lerobot
+  # - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_B_full_process/v6-5/1103_53_385_v6-5_1500_lerobot
+  # - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_B_full_process/v6-5/1104_171_352_v6-5_1500_lerobot
+  # - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_B_full_process/v6-5/1108_206_221_v6-5_1500_lerobot
+  # - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_B_full_process/v6-5/1110_206_413_v6-5_1500_lerobot
+  # - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_B_full_process/v6-5/1126_206_506_v6-5_1500_lerobot
+  # - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_B_full_process/v6-5/1127_206_325_v6-5_1500_lerobot
+  # - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_B_full_process/v6-5/1115_206_562_v6-5_1500_lerobot
+  # - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_B_full_process/v6-5/1118_206_294_v6-5_1500_lerobot
+  # - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_B_full_process/v6-5/1121_90_210_v6-5_1600_lerobot
+  # - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_B_full_process/v6-5/1122_206_340_v6-5_1500_lerobot
+  # - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_B_full_process/v6-5/1123_206_682_v6-5_1500_lerobot
+  # - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_B_full_process/v6-5/1124_206_503_v6-5_1500_lerobot
+  # - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_B_full_process/v6-5/1125_206_255_v6-5_1500_lerobot
+  # - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_B_full_process/v6-5/1102_53_171_v6-5_1500_lerobot
+  # - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_B_full_process/v6-5/1102_53_383_v6-5_1500_lerobot
+  # - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_B_full_process/v6-5/1117_206_179_v6-5_1500_lerobot
+  # - /cpfs01/shared/filtered_data/short_sleeve_shirt/demo_B_full_process/v6-5/1116_206_600_v6-5_1500_lerobot
+# 合并后数据保存路径
+dst_path: /cpfs01/shared/filtered_data/merge_data/short_sleeve_shirt/demo_B_full_process/v6-5_0105/
+tasks:  
+combine_task:
+# 任务描述，若无，留空
+task_description:
+  v6-5: hang the cloth
+save_method: cv # 视频保存方法，cv或av
+
+# 处理进程数,处理视频部分进程数目，实际进程数为process_count + 3，
+#多出的三个进程，分别为data_parquet_processor、episode_stats_processor和log进程
+# 如果为None，则使用cpu数；如果非空，则使用给定进程数
+process_count: 14

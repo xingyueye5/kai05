@@ -30,6 +30,7 @@ import json
 import argparse
 import pyarrow.parquet as pq
 import pyarrow as pa
+import shutil
 
 def calculate_rewards(advantage_source_values: np.ndarray, chunk_size: int = 50) -> np.ndarray:
     """
@@ -75,33 +76,53 @@ def compute_reward_statistics(rewards: List[float], percentiles: List[int] = lis
     # Compute percentiles points
     percentile_values = np.percentile(rewards_array, percentiles)
     
+    # 转换为 Python 原生类型，避免 JSON 序列化问题
     stats = {
-        'mean': [np.mean(rewards_array)],
-        'std': [np.std(rewards_array)],
-        'min': [np.min(rewards_array)],
-        'max': [np.max(rewards_array)],
-        'count': [len(rewards_array)]
+        'mean': [float(np.mean(rewards_array))],
+        'std': [float(np.std(rewards_array))],
+        'min': [float(np.min(rewards_array))],
+        'max': [float(np.max(rewards_array))],
+        'count': [int(len(rewards_array))]
     }
-    return stats, dict(zip(percentiles, percentile_values)),
+    return stats, {p: float(v) for p, v in zip(percentiles, percentile_values)}
 
-def compute_threshold_points(rewards: Dict[int, List[float] | np.ndarray], positive_rate: float = 30) -> float | List[float]:
+def compute_threshold_points(
+    rewards: Dict[int, List[float] | np.ndarray], 
+    advantage_type: str = "binary",
+    positive_rate: float = 30
+) -> float | List[float]:
     """
-    Compute threshold points based on positive rate.
+    Compute threshold points based on advantage type and positive rate.
+    
     Args:
-        rewards: List of all rewards
-        positive_rate: Positive rate of the task, default is 30%
+        rewards: Dictionary of rewards by stage
+        advantage_type: Type of advantage ('binary' or '<N>bins')
+        positive_rate: Positive rate for binary mode (default 30%)
+    
     Returns:
-        Threshold points
+        Threshold points:
+            - binary: single float (percentile threshold)
+            - bins: list of floats (bin edges, N-1 values for N bins)
     """
-    if len(rewards) == 1:
-        return np.percentile(rewards[0], 100 - positive_rate)
+    # 合并所有 stage 的 rewards
+    all_rewards = np.concatenate([np.array(r) for r in rewards.values()])
+    
+    if advantage_type == "binary":
+        # 二分类: 使用 positive_rate 计算阈值
+        # top positive_rate% 为 positive
+        return float(np.percentile(all_rewards, 100 - positive_rate))
+    elif advantage_type.endswith("bins") and advantage_type.split('bins')[0].isdigit():
+        # N分类: 计算 N-1 个分位点作为 bin 边界
+        bins_num = int(advantage_type.split('bins')[0])
+        percentiles = [100.0 * i / bins_num for i in range(1, bins_num)]
+        return [float(np.percentile(all_rewards, p)) for p in percentiles]
     else:
-        return [np.percentile(rewards[i], 100 - positive_rate) for i in range(len(rewards))]
+        raise ValueError(f"Unknown advantage_type: {advantage_type}")
 
 def collect_all_rewards(
     parquet_path: Path,
-    chunk_size: int = 50,
-    advantage_source: str = "progress",
+    chunk_size: int,
+    advantage_source: str,
 ) -> Tuple[Dict[int, List[float]], List[str]]:
     parquet_files = list(parquet_path.glob("chunk-*/*.parquet"))
     assert len(parquet_files) > 0, f"No parquet files found in {parquet_path}/chunk-*/"
@@ -115,83 +136,132 @@ def collect_all_rewards(
         rewards_by_stage[0].extend(rewards.tolist())
     return rewards_by_stage, parquet_files
 
-def update_tasks_jsonl(tasks_path: Path) -> None:
+def update_tasks_jsonl(tasks_path: Path, advantage_type: str) -> int:
     """
     Update tasks.jsonl file with reward statistics.
     
     Args:
         tasks_path: Base directory path containing tasks.jsonl file
+        advantage_type: Type of advantage ('binary' or '<N>bins')
+    
+    Returns:
+        Number of tasks created
+    
+    Note:
+        advantage 值为 (0, 1] 区间的数字：
+        - binary: 0.5, 1
+        - 5bins: 0.2, 0.4, 0.6, 0.8, 1
+        - 100bins: 0.01, 0.02, ..., 1
+        公式: 第 i 个 bin 的值为 (i+1)/N，其中 i 从 0 到 N-1
     """
+    import re
     tasks_jsonl_path = tasks_path / "tasks.jsonl"
     assert tasks_jsonl_path.exists(), f"Tasks.jsonl file not found at {tasks_jsonl_path}"
     
-    ##################################### 
     with open(tasks_jsonl_path, 'r') as f:
         tasks = [json.loads(i) for i in f]
-    task_desc = tasks[0]['task'].strip()# TODO: 目前假设只有1个任务，后续需要修改
-    #####################################
+    task_desc = tasks[0]['task'].strip()  # TODO: 目前假设只有1个任务，后续需要修改
 
-    if not task_desc[-1].isalpha(): # 如果最后一个字符不是字母，则去掉最后一个字符
-        task_desc = task_desc[:-1] # TODO: 行，假定后面有句号，去掉句号是吧
+    task_desc = re.sub(r'[^\w\s]+$', '', task_desc)  # 去掉末尾所有标点符号
     
-    with open(tasks_jsonl_path, 'w') as f:
-        f.write(json.dumps({
-            'task_index': 0,
-            'task': task_desc+', advantage: negative',
-        }) + '\n')
-        f.write(json.dumps({
-            'task_index': 1,
-            'task': task_desc+', advantage: positive',
-        }) + '\n')
+    if advantage_type == "binary":
+        # 二分类: 0.5 和 1
+        with open(tasks_jsonl_path, 'w') as f:
+            f.write(json.dumps({
+                'task_index': 0,
+                'task': f'{task_desc}, advantage: 0.5',
+            }) + '\n')
+            f.write(json.dumps({
+                'task_index': 1,
+                'task': f'{task_desc}, advantage: 1',
+            }) + '\n')
+        return 2
+    elif advantage_type.endswith("bins") and advantage_type.split('bins')[0].isdigit():
+        # N分类: advantage: (i+1)/N，即 1/N, 2/N, ..., N/N
+        # 例如 5bins: 0.2, 0.4, 0.6, 0.8, 1
+        bins_num = int(advantage_type.split('bins')[0])
+        with open(tasks_jsonl_path, 'w') as f:
+            for i in range(bins_num):
+                advantage_value = (i + 1) / bins_num
+                # 格式化数字，去掉不必要的尾部零
+                if advantage_value == 1:
+                    advantage_str = "1"
+                else:
+                    advantage_str = f"{advantage_value:.10g}"  # 使用 g 格式去掉尾部零
+                f.write(json.dumps({
+                    'task_index': i,
+                    'task': f'{task_desc}, advantage: {advantage_str}',
+                }) + '\n')
+        return bins_num
+    else:
+        raise ValueError(f"Unknown advantage_type: {advantage_type}")
 
-def update_info_json(info_path: Path) -> None:
+def update_info_json(info_path: Path, total_tasks: int) -> None:
     """
-    Update info.jsonl file, update total_tasks from 1 to 2.
+    Update info.json file, update total_tasks.
     
     Args:
-        info_path: Base directory path containing info.jsonl file
+        info_path: Base directory path containing info.json file
+        total_tasks: Number of total tasks
     """
     info_jsonl_path = info_path / "info.json"
     assert info_jsonl_path.exists(), f"Info.json file not found at {info_jsonl_path}"
     with open(info_jsonl_path, 'r') as f:
         info = json.load(f)
-        info['total_tasks'] = 2
+        info['total_tasks'] = total_tasks
     with open(info_jsonl_path, 'w') as f:
         json.dump(info, f, indent=4)
 
-def update_parquet_file(parquet_file: Path, threshold_points: float|List[float], chunk_size: int = 50, advantage_source: str = "progress") -> np.ndarray:
+def update_parquet_file(
+    parquet_file: Path, 
+    threshold_points: float | List[float], 
+    chunk_size: int, 
+    advantage_source: str,
+    advantage_type: str,
+    output_file: Path | None = None
+) -> np.ndarray:
     """
     Update parquet file, add new column 'reward', update task_index based on threshold_points.
     
     Args:
-        parquet_file: Path to the parquet file
-        threshold_points: List of threshold points
-    return:
+        parquet_file: Path to the parquet file (input)
+        threshold_points: Threshold point(s) for classification
+            - binary: single float value
+            - bins: list of float values (bin edges)
+        chunk_size: Number of frames to look ahead
+        advantage_source: Source column for advantage calculation
+        advantage_type: Type of advantage ('binary' or '<N>bins')
+        output_file: Path to the output parquet file. If None, overwrite the input file.
+    
+    Returns:
         Array of reward values
     """
     df = pd.read_parquet(parquet_file)
     rewards = calculate_rewards(df[advantage_source].values, chunk_size)
     df['reward'] = rewards
-    # 更新task_index based on threshold_points
-    # 如果threshold_points是个单元素的列表，则使用该元素，视为单阶段任务
-    if isinstance(threshold_points, list) and len(threshold_points) == 1:
-        threshold_points = threshold_points[0]
-
-    if isinstance(threshold_points, float):
+    
+    if advantage_type == "binary":
+        # 二分类: reward >= threshold -> 1 (positive), else -> 0 (negative)
+        if isinstance(threshold_points, list):
+            threshold_points = threshold_points[0]
         task_index = (rewards >= threshold_points).astype(np.int32)
-    elif isinstance(threshold_points, List[float]):
-        task_index = np.zeros(len(rewards), dtype=np.int32)
-        stage_nums = len(threshold_points)
-        stage_cut_points = [i/stage_nums for i in range(stage_nums)] # 初始化阶段划分点
-        stage_progress_gt_values = df['stage_progress_gt'].values
-        for frame_idx, spg in enumerate(stage_progress_gt_values):
-            stage_idx = np.where(spg >= stage_cut_points)[0][-1] # 找到当前帧属于哪个阶段
-            task_index[frame_idx] = rewards[frame_idx] >= threshold_points[stage_idx]
+    elif advantage_type.endswith("bins") and advantage_type.split('bins')[0].isdigit():
+        # N分类: 根据 percentile 分配到不同的 bin
+        # threshold_points 是 bin 边界列表 (N-1 个值)
+        bins_num = int(advantage_type.split('bins')[0])
+        # np.digitize 返回 1 到 bins_num，需要减 1 得到 0 到 bins_num-1
+        task_index = np.digitize(rewards, threshold_points, right=True).astype(np.int32)
+        # 确保 task_index 在有效范围内
+        task_index = np.clip(task_index, 0, bins_num - 1)
     else:
-        raise ValueError(f"Unknown threshold_points type: {type(threshold_points)}")
+        raise ValueError(f"Unknown advantage_type: {advantage_type}")
+    
     df['task_index'] = task_index
-
-    df.to_parquet(parquet_file, index=False)
+    
+    # 写入到指定的输出文件或覆盖原文件
+    save_path = output_file if output_file is not None else parquet_file
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(save_path, index=False)
     return rewards
 
 def update_episode_stats_jsonl(episode_stats_path: Path, rewards: Dict[int, List[float] | np.ndarray]) -> None:
@@ -215,27 +285,93 @@ def update_episode_stats_jsonl(episode_stats_path: Path, rewards: Dict[int, List
         for episode_stat in episode_stats:
             f.write(json.dumps(episode_stat) + '\n')
 
-def update_all_advantage(repo_id:Path, parquet_path, chunk_size: int = 50, advantage_source: str = "progress", positive_rate: float = 30):
+def update_all_advantage(
+    repo_id: Path, 
+    parquet_path: str, 
+    chunk_size: int, 
+    advantage_source: str, 
+    advantage_type: str, 
+    positive_rate: float,
+    output_parquet_path: str = "data"
+):
     """
-    读取repo_id下的所有parquet文件，计算奖励，更新所有parquet文件，更新tasks.jsonl，info.jsonl，episode_stats.jsonl文件
+    读取 repo_id 下的所有 parquet 文件，计算奖励，更新所有 parquet 文件，
+    更新 tasks.jsonl，info.json，episode_stats.jsonl 文件
+    
     Args:
         repo_id: Path to the repository
-        parquet_path: Path to the parquet files, default is 'data'
+        parquet_path: Path to the input parquet files (e.g., 'data_raw', 'data_v1')
         chunk_size: Number of frames to look ahead for progress calculation
         advantage_source: Source of advantage values
-        positive_rate: Positive rate of the task, default is 30%
+        advantage_type: Type of advantage ('binary' or '<N>bins')
+        positive_rate: Positive rate of the task (only for binary mode), default is 30%
+        output_parquet_path: Path to the output parquet files, default is 'data'
     """
-    rewards_all, parquet_files = collect_all_rewards(repo_id/parquet_path, chunk_size=chunk_size, advantage_source=advantage_source)
-    update_tasks_jsonl(repo_id/'meta')
-    update_info_json(repo_id/'meta')
-    # 计算阈值点,用于划分advantage: negative和advantage: positive
-    threshold_points = compute_threshold_points(rewards_all, positive_rate)
-    all_rewards = {0: []}
+    # 判断是否需要重命名文件夹
+    need_rename = parquet_path != output_parquet_path
+    
+    print(f"[INFO] Advantage type: {advantage_type}")
+    print(f"[INFO] Reading from: {repo_id / parquet_path}")
+    if need_rename:
+        print(f"[INFO] Will rename folder to: {repo_id / output_parquet_path}")
+    else:
+        print(f"[INFO] Writing to: {repo_id / output_parquet_path}")
+    if advantage_type == "binary":
+        print(f"[INFO] Positive rate: {positive_rate}%")
+    elif advantage_type.endswith("bins"):
+        bins_num = int(advantage_type.split('bins')[0])
+        print(f"[INFO] Number of bins: {bins_num}")
+    
+    # 收集所有 rewards
+    rewards_all, parquet_files = collect_all_rewards(
+        repo_id / parquet_path, 
+        chunk_size=chunk_size, 
+        advantage_source=advantage_source
+    )
+    
+    # 更新 tasks.jsonl，获取任务数量
+    total_tasks = update_tasks_jsonl(repo_id / 'meta', advantage_type=advantage_type)
+    print(f"[INFO] Total tasks created: {total_tasks}")
+    
+    # 更新 info.json
+    update_info_json(repo_id / 'meta', total_tasks=total_tasks)
+    
+    # 计算阈值点
+    threshold_points = compute_threshold_points(
+        rewards_all, 
+        advantage_type=advantage_type,
+        positive_rate=positive_rate
+    )
+    print(f"[INFO] Threshold points: {threshold_points}")
+    
+    # 计算输入路径的基础目录
+    input_base = repo_id / parquet_path
+    
+    # 更新所有 parquet 文件（原地修改）
+    all_rewards = {}
     for parquet_file in tqdm(parquet_files, desc="Updating parquet files"):
-        rewards = update_parquet_file(parquet_file, threshold_points, chunk_size=chunk_size, advantage_source=advantage_source)
+        rewards = update_parquet_file(
+            parquet_file, 
+            threshold_points, 
+            chunk_size=chunk_size, 
+            advantage_source=advantage_source,
+            advantage_type=advantage_type,
+            output_file=None  # 原地修改
+        )
         episode_index = int(parquet_file.name.split('_')[-1].split('.')[0])
         all_rewards[episode_index] = rewards
-    update_episode_stats_jsonl(repo_id/'meta', all_rewards)
+    
+    # 如果 parquet_path 和 output_parquet_path 不一致，重命名文件夹
+    if need_rename:
+        output_base = repo_id / output_parquet_path
+        if output_base.exists():
+            print(f"[WARNING] Output folder already exists, removing: {output_base}")
+            shutil.rmtree(output_base)
+        shutil.move(str(input_base), str(output_base))
+        print(f"[INFO] Renamed folder: {input_base} -> {output_base}")
+    
+    # 更新 episode_stats.jsonl
+    update_episode_stats_jsonl(repo_id / 'meta', all_rewards)
 
 def build_args():
     """
@@ -243,10 +379,11 @@ def build_args():
     """
     parser = argparse.ArgumentParser(description='Update tasks.jsonl and info.jsonl files.')
     parser.add_argument('--repo_id', type=str, default='/cpfs01/user/baidexiang/test_data_40/', help='Path to the repository')
-    parser.add_argument('--parquet_path', type=str, default='data', help='Path to the parquet files')
+    parser.add_argument('--parquet_path', type=str, default='data', help='Path to the input parquet files (e.g., data_raw, data_v1)')
+    parser.add_argument('--output_parquet_path', type=str, default='data', help='Path to the output parquet files, default is "data"')
     parser.add_argument('--chunk_size', type=int, default=50, help='Number of frames to look ahead for progress calculation')
     parser.add_argument('--advantage_source', type=str, default='progress_predicted', help='Source of advantage values')
-    parser.add_argument('--stage_nums', type=int, default=1, help='Number of stages to divide data into based on stage_progress_gt')
+    parser.add_argument('--advantage_type', type=str, default='binary', help='Type of advantage, default is binary')
     parser.add_argument('--positive_rate', type=float, default=30, help='Positive rate of the task, default is 30%')
     args = parser.parse_args()
     return args
@@ -254,7 +391,15 @@ def build_args():
 def main():
     args = build_args()
     repo_id = Path(args.repo_id)
-    update_all_advantage(repo_id=repo_id, parquet_path=args.parquet_path, chunk_size=args.chunk_size, advantage_source=args.advantage_source, positive_rate=args.positive_rate)
+    update_all_advantage(
+        repo_id=repo_id, 
+        parquet_path=args.parquet_path, 
+        chunk_size=args.chunk_size, 
+        advantage_source=args.advantage_source, 
+        advantage_type=args.advantage_type, 
+        positive_rate=args.positive_rate,
+        output_parquet_path=args.output_parquet_path
+    )
 
 if __name__ == "__main__":
     main()

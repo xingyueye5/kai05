@@ -1070,7 +1070,7 @@ _CONFIGS = [
         wandb_enabled=False,
     ),
     TrainConfig(
-        name="test_split_merge",
+        name="test_lerobot_dataset",
         model=pi0_config.Pi0Config_Custom(
             pi05=True,
             with_value_head=True,
@@ -1080,12 +1080,11 @@ _CONFIGS = [
             p_mask_ego_state=1.0,
             timestep_difference_mode=False,
             discrete_state_input=False,
-            download_path="/cpfs01/user/baidexiang/test_ckpt/big_vision/paligemma_tokenizer.model",
+            download_path="/cpfs01/shared/zhaolirui/ckpts/paligemma_tokenizer.model",
         ),
         data=LerobotPikaDataConfig(
             repo_id=[
-                "/cpfs01/shared/filtered_cut_data/short_sleeve/demo_A_full_process/v2-2/1102_21_234_v2-2_3000_lerobot",
-                "/cpfs01/shared/filtered_cut_data/short_sleeve/demo_A_full_process/v2-2/1104_20_270_v2-2_3000_lerobot",
+                "/cpfs01/user/zhaolirui/Kai05-VLA/test_lerobot_dataset/1031_20_200_v3-4_3000_lerobot_clip_200",
             ],
             base_config=DataConfig(prompt_from_task=True),
         ),
