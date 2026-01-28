@@ -23,7 +23,7 @@ echo "NUM_WORKERS: $NUM_WORKERS (单卡)"
 echo "CAMERA_KEYS: $CAMERA_KEYS"
 echo "=============================="
 
-python 01_extract_features.py \
+python scripts/extract_siglip_features.py \
     ${DATASET_PATH} \
     --ckpt ${CKPT} \
     --batch_size ${BATCH_SIZE} \
@@ -32,7 +32,7 @@ python 01_extract_features.py \
     --camera_keys ${CAMERA_KEYS}
 
 
-python 01_merge_features.py \
+python scripts/merge_siglip_features.py \
     ${DATASET_PATH} \
     --num_workers ${NUM_WORKERS} \
     --camera_keys ${CAMERA_KEYS}

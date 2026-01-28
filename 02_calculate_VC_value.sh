@@ -25,7 +25,7 @@ echo "QUERY_CHUNK_SIZE: $QUERY_CHUNK_SIZE"
 echo "WORKERS_PER_GPU: $WORKERS_PER_GPU"
 echo "=============================="
 
-python 02_optimize_progress.py \
+python scripts/calculate_VC_value.py \
     --workers_per_gpu ${WORKERS_PER_GPU} \
     --source_path ${SOURCE_PATH} \
     --top_n ${TOP_N} \

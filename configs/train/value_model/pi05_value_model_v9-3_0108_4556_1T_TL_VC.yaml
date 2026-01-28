@@ -1,0 +1,73 @@
+# test_lerobot_dataset Config
+# Value head training config for Pika dataset
+
+_target_: TrainConfig
+name: pi05_value_model_v9-3_0108_4556_1T_TL_VC
+
+# Model configuration
+model:
+  _target_: Pi0Config_Custom
+  pi05: true
+  with_value_head: true
+  loss_value_weight: 1.0
+  loss_value_use_bce: false
+  loss_action_weight: 0.0  # No action loss
+  p_mask_ego_state: 1.0
+  timestep_difference_mode: false
+  discrete_state_input: false  # Not using states into prompt
+  download_path: /cpfs01/shared/zhaolirui/ckpts/paligemma_tokenizer.model
+
+# Data configuration
+split: all
+data:
+  _target_: LerobotPikaDataConfig
+  repo_id: 
+    - /cpfs01/shared/kai05_data_train/kai0_data/short_sleeve/flatten_fold/v9-3/v9-3_0108_4556/split_1_0.1
+  assets:
+    _target_: AssetsConfig
+    assets_dir: /cpfs01/shared/kai05_data_train/kai0_data/short_sleeve/flatten_fold/v9-3/v9-3_0108_4556
+    asset_id: split_1_0.1
+  default_prompt: Fold the cloth.
+  # base_config:
+  #   _target_: DataConfig
+  #   prompt_from_task: true
+  # Repack transforms for image/state/action mapping
+  repack_transforms:
+    _target_: Group
+    inputs:
+      - _target_: RepackTransform
+        structure:
+          images:
+            top_head: observation.images.top_head
+            hand_left: observation.images.hand_left
+            hand_right: observation.images.hand_right
+          state: observation.state
+          actions: action
+          frame_index: frame_index
+          progress_gt: progress_gt
+          stage_progress_gt: stage_progress_gt
+          progress: progress  # Required for training, not for inference
+          progress_predicted: progress_predicted
+
+# Weight loader - pretrained weights
+pytorch_weight_path: /cpfs01/shared/zhaolirui/ckpts/pi05/_official_ckpts/torch_ver/pi05_base
+pytorch_model_class: PI0Pytorch_Custom
+
+# checkpoint base directory
+checkpoint_base_dir: /nas/zhaolirui/Kai05-VLA/checkpoints
+
+# Training hyperparameters
+num_train_steps: 100000
+keep_period: 10000
+save_interval: 5000
+
+# Data loading
+num_workers: 32
+batch_size: 128  # For 1 GPU, use 128 for 8 GPUs
+
+# Training modes
+with_episode_start: false
+timestep_difference_mode: false
+stage_process_mode: false
+skip_norm_stats: true  # No norm stats used
+use_progress_predicted: true

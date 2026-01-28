@@ -306,16 +306,12 @@ def run_gpu_worker(gpu_id: int, worker_id: int, features: Dict[str, torch.Tensor
         print(f"GPU {gpu_id} Worker {worker_id}: 已完成并清理显存")
 
 def write_parquet(result: Tuple, source_path: Path, chunk_size: int = 1000):
-    dst_path = source_path / "progress_predicted"
     data_parquet = source_path / "data"
     progress_predictions, episode_index = result
-    old_parquet_path = data_parquet / f"chunk-{episode_index//chunk_size:03d}" / f"episode_{episode_index:06d}.parquet"
-    new_parquet_path = dst_path / f"chunk-{episode_index//chunk_size:03d}" / f"episode_{episode_index:06d}.parquet"
-    df = pd.read_parquet(old_parquet_path)
+    parquet_path = data_parquet / f"chunk-{episode_index//chunk_size:03d}" / f"episode_{episode_index:06d}.parquet"
+    df = pd.read_parquet(parquet_path)
     df['progress_predicted'] = progress_predictions
-    if not new_parquet_path.parent.exists():
-        new_parquet_path.parent.mkdir(parents=True, exist_ok=True)
-    df.to_parquet(new_parquet_path, index=False)
+    df.to_parquet(parquet_path, index=False)
 
 def main(workers_per_gpu: int = 1, user_args: argparse.Namespace = None):
     """
@@ -421,6 +417,7 @@ def build_parsers():
     parser.add_argument("--query_chunk_size", type=int, default=64, help="query chunk大小")
     parser.add_argument("--camera_keys", type=str, nargs="+", default=None, help="要使用的相机列表")
     return parser.parse_args()
+
 if __name__ == "__main__":
     args = build_parsers()
     # print(args)

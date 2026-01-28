@@ -333,8 +333,11 @@ def train_loop(config: _config.TrainConfig):
         else:
             raise FileNotFoundError(f"Experiment checkpoint directory {exp_checkpoint_dir} does not exist for resume")
     elif config.overwrite and config.checkpoint_dir.exists():
-        shutil.rmtree(config.checkpoint_dir)
-        logging.info(f"Overwriting checkpoint directory: {config.checkpoint_dir}")
+        if is_main:
+            shutil.rmtree(config.checkpoint_dir)
+            logging.info(f"Overwriting checkpoint directory: {config.checkpoint_dir}")
+        else:
+            logging.info(f"Overwriting checkpoint directory: {config.checkpoint_dir} (not on main process)")
 
     # Create checkpoint directory with experiment name
     if not resuming:
@@ -687,5 +690,5 @@ def main_custom():
 
 
 if __name__ == "__main__":
-    # main_custom()
-    main()
+    main_custom()
+    # main()

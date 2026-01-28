@@ -614,6 +614,7 @@ class TrainConfig:
     # p_video_rewind: float = 0.
     timestep_difference_mode: bool = False
     stage_process_mode: bool = False
+    use_progress_predicted: bool = False
     drop_last: bool = True  # If true, will drop the last incomplete batch.
 
     skip_norm_stats: bool = False

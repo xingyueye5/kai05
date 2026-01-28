@@ -13,7 +13,7 @@ ORIGINAL_REPO_ID=/cpfs01/shared/kai05_data/kai0_data/short_sleeve/flatten_fold/v
 # ADVANTAGE_TYPE 支持以下格式:
 #   - "binary"       : 二分类 (negative/positive)
 #   - "<N>bins"      : N分类，如 "10bins", "5bins"
-ADVANTAGE_TYPE="10bins"
+ADVANTAGE_TYPE="100bins"
 
 # ---------- 比例配置 (仅 binary 模式生效) ----------
 # POSITIVE_RATE: positive 的比例 (百分比)，如 30 表示 top 30% 为 positive
@@ -151,7 +151,7 @@ main() {
     cd /cpfs01/user/zhaolirui/Kai05-VLA
     source .venv/bin/activate
 
-    python 03_lerobot_value_reward.py \
+    python scripts/calculate_lerobot_advantage.py \
         --repo_id "$REPO_ID" \
         --parquet_path "$PARQUET_PATH" \
         --chunk_size "$CHUNK_SIZE" \

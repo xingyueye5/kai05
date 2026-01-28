@@ -38,6 +38,7 @@ class CustomLeRobotDataset(LeRobotDataset):
         skip_sample_ratio_within_episode: float = 0.0,  # * 0 for no skipping, 0.5 for skipping first 50% samples in an episode
         timestep_difference_mode: bool = False,  # * Selecting samples from two different timesteps and do comparison as learning target.
         stage_process_mode: bool = False,  # * Using stage progress supervision.
+        use_progress_predicted: bool = False,  # * Using progress predicted as learning target.
     ):
         """
         Initialize CustomLeRobotDataset.
@@ -80,7 +81,8 @@ class CustomLeRobotDataset(LeRobotDataset):
         self.skip_sample_ratio_within_episode = skip_sample_ratio_within_episode
         self.timestep_difference_mode = timestep_difference_mode
         self.stage_process_mode = stage_process_mode
-
+        self.use_progress_predicted = use_progress_predicted
+        
         # Validation
         assert self.skip_sample_ratio_within_episode <= 0.5
         if self.timestep_difference_mode:
@@ -199,6 +201,9 @@ class CustomLeRobotDataset(LeRobotDataset):
         elif self.stage_process_mode:
             stage_progress_gt = final_item["stage_progress_gt"].item()
             final_item["progress"] = stage_progress_gt
+        elif self.use_progress_predicted:
+            progress_predicted = final_item["progress_predicted"].item()
+            final_item["progress"] = progress_predicted
         else:
             progress_gt = final_item["progress_gt"].item()
             final_item["progress"] = progress_gt

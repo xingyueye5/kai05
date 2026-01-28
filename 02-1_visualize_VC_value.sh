@@ -30,7 +30,7 @@ for ((episode=START_EPISODE; episode<=END_EPISODE; episode++)); do
     echo "正在处理 episode $episode / $END_EPISODE"
     echo "========================================"
     
-    python 02-1_visualize_progress.py \
+    python scripts/visualize_VC_value.py \
         "$DATASET_PATH" \
         --episode "$episode"
 done

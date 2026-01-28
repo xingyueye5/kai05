@@ -163,6 +163,7 @@ def create_torch_dataset(
             skip_sample_ratio_within_episode=config.skip_sample_ratio_within_episode,
             timestep_difference_mode=config.timestep_difference_mode,
             stage_process_mode=config.stage_process_mode,
+            use_progress_predicted=config.use_progress_predicted,
         )
     else:
         data_kwargs = {}
