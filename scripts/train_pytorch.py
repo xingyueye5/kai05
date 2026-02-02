@@ -184,7 +184,8 @@ def save_checkpoint(model, optimizer, global_step, config, is_main, data_config)
         # save norm stats
         norm_stats = data_config.norm_stats
         if norm_stats is not None and data_config.asset_id is not None:
-            _normalize.save(tmp_ckpt_dir / "assets" / data_config.asset_id, norm_stats)
+            short_asset_id = data_config.asset_id.split("/")[-1]
+            _normalize.save(tmp_ckpt_dir / "assets" / short_asset_id, norm_stats)
 
         # Atomically move temp directory to final location
         if final_ckpt_dir.exists():
@@ -336,18 +337,22 @@ def train_loop(config: _config.TrainConfig):
         if is_main:
             shutil.rmtree(config.checkpoint_dir)
             logging.info(f"Overwriting checkpoint directory: {config.checkpoint_dir}")
-        else:
-            logging.info(f"Overwriting checkpoint directory: {config.checkpoint_dir} (not on main process)")
+    elif (not config.overwrite) and config.checkpoint_dir.exists():
+        if is_main:
+            raise FileExistsError(
+                f"Checkpoint directory {config.checkpoint_dir} already exists. Use --overwrite or --resume to handle it."
+            )
 
     # Create checkpoint directory with experiment name
-    if not resuming:
-        # For new runs, create experiment-specific checkpoint directory
-        exp_checkpoint_dir = config.checkpoint_dir
-        exp_checkpoint_dir.mkdir(parents=True, exist_ok=True)
-        logging.info(f"Created experiment checkpoint directory: {exp_checkpoint_dir}")
-    else:
-        # For resume, checkpoint_dir is already set to the experiment directory
-        logging.info(f"Using existing experiment checkpoint directory: {config.checkpoint_dir}")
+    if is_main:
+        if not resuming:
+            # For new runs, create experiment-specific checkpoint directory
+            exp_checkpoint_dir = config.checkpoint_dir
+            exp_checkpoint_dir.mkdir(parents=True, exist_ok=True)
+            logging.info(f"Created experiment checkpoint directory: {exp_checkpoint_dir}")
+        else:
+            # For resume, checkpoint_dir is already set to the experiment directory
+            logging.info(f"Using existing experiment checkpoint directory: {config.checkpoint_dir}")
 
     # Initialize wandb (only on main process)
     if is_main:
@@ -460,10 +465,19 @@ def train_loop(config: _config.TrainConfig):
 
         model_path = os.path.join(config.pytorch_weight_path, "model.safetensors")
         safetensors.torch.load_model(
-            (model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model),
-            model_path,
-            strict=False,
+            (model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model), 
+            model_path, 
+            strict=False  # ! DEBUG
         )
+        
+        # * post init target model
+        model_to_update = model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model
+        if getattr(model_to_update, 'TD_learning', False):
+            model_to_update.init_target_model()
+
+        # to_removes: defaultdict(<class 'list'>, {'paligemma_with_expert.paligemma.lm_head.weight': ['paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight']})
+        # reverse_to_remove: {'paligemma_with_expert.paligemma.model.language_model.embed_tokens.weight': 'paligemma_with_expert.paligemma.lm_head.weight'}
+
         logging.info(f"Loaded PyTorch weights from {config.pytorch_weight_path}")
 
     # Optimizer + learning rate schedule from config
@@ -480,6 +494,9 @@ def train_loop(config: _config.TrainConfig):
         eps=config.optimizer.eps,
         weight_decay=config.optimizer.weight_decay,
     )
+
+    # Gradient accumulation counter
+    accumulation_counter = 0
 
     # Load checkpoint if resuming
     global_step = 0
@@ -559,19 +576,30 @@ def train_loop(config: _config.TrainConfig):
             # Log memory usage after backward pass
             if global_step < 5 and is_main and torch.cuda.is_available():
                 log_memory_usage(device, global_step, "after_backward")
+                
+            
+            accumulation_counter += 1
+            grad_norm = None
 
-            # Gradient clipping
-            grad_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=config.optimizer.clip_gradient_norm)
+            # print("grad_accu_steps", config.grad_accu_steps)
+            # breakpoint()
+            
+            if accumulation_counter % config.grad_accu_steps == 0:
 
-            # Optimizer step
-            optim.step()
-            optim.zero_grad(set_to_none=True)
+                # Gradient clipping
+                grad_norm = torch.nn.utils.clip_grad_norm_(
+                    model.parameters(), max_norm=config.optimizer.clip_gradient_norm
+                )
 
-            # Clear gradients more aggressively
-            for param in model.parameters():
-                if param.grad is not None:
-                    param.grad.detach_()
-                    param.grad = None
+                # Optimizer step
+                optim.step()
+                optim.zero_grad(set_to_none=True)
+                # Reset the gradient accumulation counter
+                accumulation_counter = 0
+
+                model_to_update = model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model
+                if hasattr(model_to_update, 'update_target_network') and model_to_update.TD_learning:
+                    model_to_update.update_target_network()
 
             # Collect stats
             if is_main:

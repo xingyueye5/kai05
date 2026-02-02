@@ -227,8 +227,33 @@ class DataParquetProcessor(Process):
         old_episodes_index.sort()
         pairs_data_index = [] # 记录合并前后数据索引，包括合并前的数据名称，以及合并后的数据名称
 
-        record_csv = os.listdir(source_path/'meta')
-        record_csv = [item for item in record_csv if 'record.csv' in item and item.lower().startswith('v')]
+        # 新的 CSV 查找方式：{父文件夹名称}_record.csv
+        parent_folder_name = source_path.parent.name
+        record_csv_name = f"{parent_folder_name}_record.csv"
+        record_csv_path = source_path / 'meta' / record_csv_name
+        
+        if not record_csv_path.exists():
+            self.logger.warning(f'{record_csv_path} not found, skip {source_path}')
+            return
+        
+        # 从 source_path.name 提取版本号（如 v1_260120_001_day_shift_395_10000_lerobot 中的 v1）
+        dataset_name = source_path.name.lower()
+        version_pattern = re.compile(r"^(?P<version>v\d+(?:-\d+)?|mixed\d+\.\d+)")
+        version_match = version_pattern.match(dataset_name)
+        
+        if not version_match:
+            self.logger.warning(f'{source_path.name} 未匹配到版本号，使用默认版本 None_version')
+            version = 'None_version'
+        else:
+            version = version_match.group('version')
+            self.logger.info(f'{source_path.name} 匹配到版本号：{version}')
+        
+        try:
+            current_task = self.tasks[version]['task_index']
+        except Exception as e:
+            self.logger.error(f'While running run_one_task, miss version {version} in tasks, {source_path}: {e}, current_task: 赋值-1')
+            current_task = -1
+
         with open(source_path/'meta'/'info.json', 'r') as f:
             info = json.load(f)
         chunks_size = info.get('chunks_size', 1000)
@@ -238,79 +263,61 @@ class DataParquetProcessor(Process):
         episodes = {
             item['episode_index']:item for item in episodes if item['episode_index'] in old_episodes_index
         }
-        for record_file in record_csv:
-            match = self.NAME_PATTERN.match(record_file.lower())
-            if not match:
-                self.logger.warning(f'{record_file} not match pattern {self.NAME_PATTERN}，未找到标注版本号')
+        
+        record_data = pd.read_csv(record_csv_path)
+        record_data = record_data.sort_values(by='video')  # 原始视频可能乱序
+        record_data = record_data.dropna(axis=1)
+        num_cols = record_data.columns.tolist()
+        if 'failure_points' in num_cols:
+            num_cols.remove('failure_points')
+        if 'video' in num_cols:
+            num_cols.remove('video')
+        if 'note' in num_cols:
+            num_cols.remove('note')
+        for col in num_cols:
+            record_data[col] = pd.to_numeric(record_data[col], errors='coerce')
+        # 仅保留去重后的数据，对应的episode_index
+        record_data.loc[:,"episode_index"] = [int(item.split('.')[0].split('_')[-1]) for item in record_data['video'].values]
+        record_data = record_data.loc[record_data['episode_index'].isin(old_episodes_index)]
+
+        start_time_name = num_cols[0]  # 假设数据排列按照规定顺序
+        tqdm_logger = TqdmToLogger(self.logger)
+
+        # 处理每个parquet数据，并记录合并前后数据索引
+        for _, row in tqdm(record_data.iterrows(), total=len(record_data), desc=f'Processing {record_csv_name}', file=tqdm_logger):
+            video = row.iloc[0]
+            target_time = row.loc[num_cols].values
+            if not all(np.diff(target_time) >= 0):
+                self.logger.error(f'record time error, {source_path}/meta/{record_csv_name}, {video} label time is not increasing, skip, label time: {target_time}')
                 continue
-            version = match.group('version')
-            if not version:  # 当前默认版本
-                version = 'None_version'
-                self.logger.warning(f'{record_file} not match pattern {self.NAME_PATTERN}，未找到标注版本号，使用默认版本 None_version')
-            else:
-                self.logger.info(f'{record_file} match pattern {self.NAME_PATTERN}，标注版本号为{version}')
+            episode_index = int(video.split('.')[0].split('_')[-1])
+            chunk_index = episode_index // chunks_size
+
+            data_path = source_path/'data'/f'chunk-{chunk_index:03d}'/f'episode_{episode_index:06d}.parquet'
             try:
-                current_task = self.tasks[version]['task_index']
+                data, old_start_frame_index, old_end_frame_index, self.global_index, results = cal_data_parquet_stats(data_path, self.global_episode_index, self.global_index, current_task, target_time=target_time, logger=self.logger)
             except Exception as e:
-                self.logger.error(f'While running run_one_task, miss version {version} in tasks, {source_path}: {e}, current_task: 赋值-1')
-                current_task = -1
-            record_data = pd.read_csv(source_path/'meta'/record_file, )
-            record_data = record_data.sort_values(by='video')  # 原始视频可能乱序
-            record_data = record_data.dropna(axis=1)
-            num_cols = record_data.columns.tolist()
-            if 'failure_points' in num_cols:
-                num_cols.remove('failure_points')
-            if 'video' in num_cols:
-                num_cols.remove('video')
-            if 'note' in num_cols:
-                num_cols.remove('note')
-            for col in num_cols:
-                record_data[col] = pd.to_numeric(record_data[col], errors='coerce')
-            # 仅保留去重后的数据，对应的episode_index
-            record_data.loc[:,"episode_index"] = [int(item.split('.')[0].split('_')[-1]) for item in record_data['video'].values]
-            record_data = record_data.loc[record_data['episode_index'].isin(old_episodes_index)]
-
-            start_time_name = num_cols[0]  # 假设数据排列按照规定顺序
-            tqdm_logger = TqdmToLogger(self.logger)
-
-            # 处理每个parquet数据，并记录合并前后数据索引
-            for _, row in tqdm(record_data.iterrows(), total=len(record_data), desc=f'Processing {record_file}', file=tqdm_logger):
-                video = row.iloc[0]
-                target_time = row.loc[num_cols].values
-                if not all(np.diff(target_time) >= 0):
-                    self.logger.error(f'record time error, {source_path}/meta/{record_file}, {video} label time is not increasing, skip, label time: {target_time}')
-                    continue
-                episode_index = int(video.split('.')[0].split('_')[-1])
-                chunk_index = episode_index // chunks_size
-
-                data_path = source_path/'data'/f'chunk-{chunk_index:03d}'/f'episode_{episode_index:06d}.parquet'
-                try:
-                    data, old_start_frame_index, old_end_frame_index, self.global_index, results = cal_data_parquet_stats(data_path, self.global_episode_index, self.global_index, current_task, target_time=target_time, logger=self.logger)
-                except Exception as e:
-                    self.logger.error(f'While running cal_data_parquet_stats, Error processing dataset {data_path}: {e}')
-                    continue
-                # 保存.parquet数据
-                atomic_write.atomic_write_parquet(self.dst_path/f'data/chunk-{self.global_episode_index//self.chunks_size:03d}'/f'episode_{self.global_episode_index:06d}.parquet', 
-                                                data)                                    
-                self.global_episodes.append({
-                    'episode_index': self.global_episode_index,
-                    'tasks': episodes.get(episode_index, {}).get('tasks', ['']),
-                    'length': old_end_frame_index - old_start_frame_index + 1,
-                })
-                self.queue.put((source_path, video, old_start_frame_index, old_end_frame_index, self.global_episode_index, self.global_index, results))
-                pairs_data_index.append({
-                    'old_index': episode_index,
-                    'new_index': self.global_episode_index,
-                    'task_index': current_task,
-                })
-                # 重新调整video编号
-                row.loc['video'] = f'episode_{self.global_episode_index:06d}.mp4'
-                cloth = match.group('cloth')
-                if cloth:
-                    row.loc['note'] = cloth
-                row.loc[num_cols] = row.loc[num_cols] - row.loc[start_time_name]
-                self.tasks[version]['task_episodes'].append(row)
-                self.global_episode_index += 1 # 更新全局数据集索引
+                self.logger.error(f'While running cal_data_parquet_stats, Error processing dataset {data_path}: {e}')
+                continue
+            # 保存.parquet数据
+            atomic_write.atomic_write_parquet(self.dst_path/f'data/chunk-{self.global_episode_index//self.chunks_size:03d}'/f'episode_{self.global_episode_index:06d}.parquet', 
+                                            data)                                    
+            self.global_episodes.append({
+                'episode_index': self.global_episode_index,
+                'tasks': episodes.get(episode_index, {}).get('tasks', ['']),
+                'length': old_end_frame_index - old_start_frame_index + 1,
+            })
+            self.queue.put((source_path, video, old_start_frame_index, old_end_frame_index, self.global_episode_index, self.global_index, results))
+            pairs_data_index.append({
+                'old_index': episode_index,
+                'new_index': self.global_episode_index,
+                'task_index': current_task,
+            })
+            # 重新调整video编号
+            row.loc['video'] = f'episode_{self.global_episode_index:06d}.mp4'
+            row.loc[num_cols] = row.loc[num_cols] - row.loc[start_time_name]
+            self.tasks[version]['task_episodes'].append(row)
+            self.global_episode_index += 1 # 更新全局数据集索引
         self.logger.info('Finish processing dataset %s', source_path)
         self.merge_info[str(source_path)] = pairs_data_index
     
@@ -378,18 +385,28 @@ class DataParquetProcessor(Process):
                 task_index += 1
         
         tqdm_logger = TqdmToLogger(self.logger)
-        record_csv_list = []
+        version_pattern = re.compile(r"^(?P<version>v\d+(?:-\d+)?|mixed\d+\.\d+)")
+        
+        # 遍历所有数据路径，从路径名中提取版本号
         print('self.data_path', self.data_path)
-        for path in self.data_path:
-            record_csv_list.extend(list(path.glob('meta/*record.csv')))
-        record_csv_list = [item for item in record_csv_list if 'error' not in item.name.lower()]
-
-        for record_file in tqdm(record_csv_list, desc='Traversing data paths, allocating task indices', file=tqdm_logger):
-            match = self.NAME_PATTERN.match(record_file.name.lower())
-            if not match or not match.group('version'):
-                self.logger.warning(f'{record_file} not match pattern {self.NAME_PATTERN}，未找到标注版本号')
+        for source_path in tqdm(self.data_path.keys(), desc='Traversing data paths, allocating task indices', file=tqdm_logger):
+            # 检查 CSV 文件是否存在
+            parent_folder_name = source_path.parent.name
+            record_csv_name = f"{parent_folder_name}_record.csv"
+            record_csv_path = source_path / 'meta' / record_csv_name
+            
+            if not record_csv_path.exists():
+                self.logger.warning(f'{record_csv_path} not found, skip {source_path}')
                 continue
-            version = match.group('version')
+            
+            # 从 source_path.name 提取版本号
+            dataset_name = source_path.name.lower()
+            version_match = version_pattern.match(dataset_name)
+            
+            if not version_match or not version_match.group('version'):
+                self.logger.warning(f'{source_path.name} 未匹配到版本号，跳过')
+                continue
+            version = version_match.group('version')
             if version not in temp_tasks.keys() : # 非需要合并任务，则直接添加到self.tasks
                 if version not in self.tasks.keys(): # 如果tasks里不存在
                     self.tasks[version] = {
@@ -407,7 +424,7 @@ class DataParquetProcessor(Process):
             # 更新任务描述到任务索引的映射;如果任务描述中没有该任务，则添加到任务描述中
             task_name = self.tasks[version]['task']
             if task_name == version: # 未提供任务描述，则从meta/tasks.jsonl中获取任务描述
-                with open(record_file.parent/'tasks.jsonl', 'r') as f:
+                with open(source_path/'meta'/'tasks.jsonl', 'r') as f:
                     tasks = [json.loads(line) for line in f if line.strip()]
                 # 假设一个数据集仅有一个任务
                 task_name = tasks[0]['task'] if isinstance(tasks[0]['task'], str) else ''.join(tasks[0]['task'])

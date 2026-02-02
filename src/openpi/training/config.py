@@ -618,6 +618,11 @@ class TrainConfig:
     drop_last: bool = True  # If true, will drop the last incomplete batch.
 
     skip_norm_stats: bool = False
+
+    grad_accu_steps: int = 1  # Gradient accumulation steps.
+
+
+    
     # ***************************************************
     # If set, any existing checkpoints matching step % keep_period == 0 will not be deleted.
     keep_period: int | None = 5000

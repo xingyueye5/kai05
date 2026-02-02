@@ -1,11 +1,15 @@
 import logging
 import math
+import copy
+import random
 
 import torch
 from torch import Tensor
 from torch import nn
 import torch.nn.functional as F  # noqa: N812
 
+
+from openpi.models.model import Observation # 如果需要 Observation.from_dict
 import openpi.models.gemma as _gemma
 from openpi.models_pytorch.gemma_pytorch import PaliGemmaWithExpertModel
 from openpi.models_pytorch.model_registry import register_pytorch_model
@@ -563,6 +567,13 @@ class PI0Pytorch_Custom(PI0Pytorch):
 
             self.value_head = nn.Sequential(*mlp_layers)
 
+        self.TD_learning = getattr(config, "value_TD_learning", False) and self.with_value_head
+        if self.TD_learning:
+            self.TD_TAU = getattr(config, "value_TD_TAU", 0.005)
+            self.gamma = getattr(config, "value_gamma", 0.99)
+            self.terminal_window = getattr(config, "value_terminal_window", 10)
+            self.failure_reward = getattr(config, "value_failure_reward", -1.0)
+
     def _preprocess_observation(self, observation, *, train=True, return_full_obs=False):
         """Helper method to preprocess observation."""
         observation = _preprocessing.preprocess_observation_pytorch_custom(
@@ -732,8 +743,31 @@ class PI0Pytorch_Custom(PI0Pytorch):
 
     def forward(self, observation, actions, noise=None, time=None, return_loss_dict=False) -> tuple[Tensor, dict]:
         """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
-
         # print("observation.action_advantage_original:", observation.action_advantage_original)
+        
+        # 处理 future observation 用于 TD learning
+        future_obs = None
+        if self.TD_learning:
+            breakpoint()
+            # 提取 future images (*_1_rgb) 作为 future observation
+            future_obs = {}
+            for k, v in observation.__dict__.items():
+                if k != "images":
+                    future_obs[k] = v
+
+            future_obs_images = {}
+            for cam in ["base", "left_wrist", "right_wrist"]:
+                src = f"{cam}_1_rgb"
+                dst = f"{cam}_0_rgb"
+                if src in observation.images:
+                    future_obs_images[dst] = observation.images[src]
+
+            future_obs["image"] = future_obs_images
+            future_obs["image_mask"] = future_obs.pop("image_masks")
+            future_obs = Observation.from_dict(future_obs)
+            # 从当前 observation 中移除已提取的 future images
+            observation.drop_images(["base_1_rgb", "left_wrist_1_rgb", "right_wrist_1_rgb"])
+        
         images, img_masks, lang_tokens, lang_masks, state, obs_full = self._preprocess_observation(
             observation, train=self.training, return_full_obs=True
         )
@@ -813,30 +847,60 @@ class PI0Pytorch_Custom(PI0Pytorch):
             deep_rep = suffix_out_full[:, 0, :].to(dtype=torch.float32)
             value_pred = self.value_head(deep_rep)  # Shape: (B, 1)
 
-            # Prepare value target (episode progress)
-            # tgt_frame_index = obs_full.frame_index.float()
+            value_loss = torch.zeros(loss.shape[0], 1, device=loss.device)
 
-            # episode_length = obs_full.episode_length.float()
-            # # Avoid division by zero for episodes of length 0
-            # episode_length = torch.where(episode_length > 0, episode_length, torch.ones_like(episode_length))
+            # TD Learning loss
+            if self.TD_learning and future_obs is not None:
+                with torch.no_grad():
+                    # 计算 reward 和 done
+                    cur_frame_index = obs_full.frame_index.float()
+                    episode_length = obs_full.episode_length.float()
+                    is_failure_data = obs_full.is_failure_data.float()
 
-            # if not self.timestep_difference_mode:
-            #     progress_tgt = torch.clamp(tgt_frame_index / episode_length, 0.0, 1.0)
-            # else:
-            #     progress_tgt = torch.clamp(tgt_frame_index / episode_length, -1.0, 1.0)  # * tgt_frame_index already processed, might be negative
-            if self.timestep_difference_mode:
-                progress_tgt = torch.clamp(obs_full.progress.float(), -1.0, 1.0)
-            else:
-                progress_tgt = torch.clamp(obs_full.progress.float(), 0.0, 1.0)
-            progress_tgt = progress_tgt.unsqueeze(1)  # Shape: (B, 1)
+                    # 判断是否在 terminal window 内
+                    is_terminal = (cur_frame_index - episode_length).abs() <= self.terminal_window
 
-            # Calculate value loss
-            if self.loss_value_use_bce:
-                value_loss = F.binary_cross_entropy_with_logits(value_pred, progress_tgt, reduction="none")
-            else:
-                value_loss = F.mse_loss(value_pred, progress_tgt, reduction="none")
+                    # 计算 reward: terminal 时 success=1, failure=failure_reward
+                    reward = is_terminal * is_failure_data * self.failure_reward + \
+                             is_terminal * (1 - is_failure_data) * 1.0
 
-            # Weight the value loss
+                    done = is_terminal.float()
+
+                    # 确保形状对齐
+                    if reward.ndim == 1:
+                        reward = reward.unsqueeze(1)
+                    if done.ndim == 1:
+                        done = done.unsqueeze(1)
+
+                    # 使用 target model 计算 V(s')
+                    next_value_pred = self.target_model.sample_values(device=actions.device, observation=future_obs)
+
+                    # Bellman Backup: target = r + gamma * (1-done) * V_target(s')
+                    target_value = reward + self.gamma * (1.0 - done) * next_value_pred
+
+                    # Clamp target value
+                    if self.timestep_difference_mode:
+                        target_value = torch.clamp(target_value, -1.0, 1.0)
+                    else:
+                        target_value = torch.clamp(target_value, 0.0, 1.0)
+
+                value_loss += F.mse_loss(value_pred, target_value, reduction="none")
+
+            if self.p_with_progress_loss > 0.0:
+                # Progress estimation loss (原有的 supervised loss)
+                if self.timestep_difference_mode:
+                    progress_tgt = torch.clamp(obs_full.progress.float(), -1.0, 1.0)
+                else:
+                    progress_tgt = torch.clamp(obs_full.progress.float(), 0.0, 1.0)
+                progress_tgt = progress_tgt.unsqueeze(1)  # Shape: (B, 1)
+
+                # Calculate progress value loss
+                if self.loss_value_use_bce:
+                    value_loss += F.binary_cross_entropy_with_logits(value_pred, progress_tgt, reduction="none")
+                else:
+                    value_loss += F.mse_loss(value_pred, progress_tgt, reduction="none")
+
+                # Weight the value loss
             value_loss = value_loss.to(loss.dtype) * self.loss_value_weight
 
             # Populate auxiliary dictionary for logging
@@ -851,6 +915,24 @@ class PI0Pytorch_Custom(PI0Pytorch):
         return loss
 
         # --- End of Modifications ---
+
+    def init_target_model(self):
+        """初始化 target model 用于 TD learning"""
+        self.target_model = copy.deepcopy(self)
+        for param in self.target_model.parameters():
+            param.requires_grad = False
+        self.target_model.TD_learning = False
+        self.target_model.target_model = None
+        self.target_model.eval()
+
+    def update_target_network(self):
+        """使用 EMA 更新 target network"""
+        if not self.TD_learning or self.target_model is None:
+            return
+        with torch.no_grad():
+            for param, target_param in zip(self.parameters(), self.target_model.parameters()):
+                target_param.data.mul_(1 - self.TD_TAU)
+                target_param.data.add_(param.data * self.TD_TAU)
 
     @torch.no_grad()
     def sample_actions(

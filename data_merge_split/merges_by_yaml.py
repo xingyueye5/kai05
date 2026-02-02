@@ -19,7 +19,7 @@ from drop_duplicated import drop_duplicated_data2, get_path2episodes
 def build_parser():
     parser = argparse.ArgumentParser(description='Merge data based on .yaml config file')
     parser.add_argument('--config', type=str, required=True, help='Config file path')
-    parser.add_argument('--log_file', type=str, required=False, help='Log file path')
+    parser.add_argument('--log_file', type=str, required=False, default=None, help='Log file path. If not provided, will use the same relative path as config yaml under logs/')
     parser.add_argument('--compute_progress', required=False, help='Store progress', default=False, action='store_true')
     parser.add_argument('--loger_info_path', type=str, default='logs', required=False, help='Part of the data path to save loger info')
     args = parser.parse_args()
@@ -39,7 +39,26 @@ def drop_duplicated_data(source_path: List[Path], logger: logging.Logger, args: 
 def main(args):
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
-    log_file = Path(__file__).parent/args.loger_info_path/args.log_file
+    
+    # 如果没有指定 log_file，则使用和 config yaml 相同的相对路径结构
+    if args.log_file is None:
+        config_path = Path(args.config)
+        # 找到 config 目录的位置，提取相对路径
+        config_parts = config_path.parts
+        if 'config' in config_parts:
+            config_idx = config_parts.index('config')
+            relative_path = Path(*config_parts[config_idx + 1:])
+        else:
+            # 如果没有 config 目录，就用文件名
+            relative_path = Path(config_path.name)
+        # 将扩展名改为 .log
+        log_file_name = relative_path.with_suffix('.log')
+        log_file = Path(__file__).parent / args.loger_info_path / log_file_name
+    else:
+        log_file = Path(__file__).parent / args.loger_info_path / args.log_file
+    
+    # 确保日志文件的父目录存在
+    log_file.parent.mkdir(parents=True, exist_ok=True)
     log_queue, log_listener, log_handlers = start_logging_listener(log_file=log_file,console=True)
     setup_logging(log_queue=log_queue)  # 先配置logging，才能正确写入日志
     logger = logging.getLogger(__name__)

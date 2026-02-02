@@ -1,8 +1,8 @@
-# TEST_SPLIT_MERGE Config
+# test_lerobot_dataset Config
 # Value head training config for Pika dataset
 
 _target_: TrainConfig
-name: TEST_SPLIT_MERGE
+name: debug_two_losses
 
 # Model configuration
 model:
@@ -11,26 +11,35 @@ model:
   with_value_head: true
   loss_value_weight: 1.0
   loss_value_use_bce: false
+  # * Progress loss
+  p_with_progress_loss: 1.0  
+  # * TD learning 
+  value_TD_learning: true
+  value_TD_TAU: 0.1
+  value_gamma: 0.99
+  value_terminal_window: 10
+  value_failure_reward: -1.0
+  
   loss_action_weight: 0.0  # No action loss
   p_mask_ego_state: 1.0
   timestep_difference_mode: false
   discrete_state_input: false  # Not using states into prompt
-  download_path: /cpfs01/user/baidexiang/test_ckpt/big_vision/paligemma_tokenizer.model
+  download_path: /cpfs01/shared/zhaolirui/ckpts/paligemma_tokenizer.model
 
 # Data configuration
+split: all
 data:
   _target_: LerobotPikaDataConfig
   repo_id: 
-    - /cpfs01/shared/filtered_cut_data/short_sleeve/demo_A_full_process/v2-2/1102_21_234_v2-2_3000_lerobot
-    - /cpfs01/shared/filtered_cut_data/short_sleeve/demo_A_full_process/v2-2/1104_20_270_v2-2_3000_lerobot
+    - /cpfs01/shared/kai05_data_train/kai0_data/short_sleeve/flatten_fold/v9-3/v9-3_0108_4556/split_1_0.1
+  base_config:
+    _target_: DataConfig
+    prompt_from_task: false
   assets:
     _target_: AssetsConfig
-    assets_dir: /cpfs01/user/baidexiang/test
-    asset_id: flatten_fold
-  default_prompt: Flatten the cloth.
-  # base_config:
-  #   _target_: DataConfig
-  #   prompt_from_task: true
+    assets_dir: /cpfs01/shared/kai05_data_train/kai0_data/short_sleeve/flatten_fold/v9-3/v9-3_0108_4556
+    asset_id: split_1_0.1
+  default_prompt: Fold the cloth.
   # Repack transforms for image/state/action mapping
   repack_transforms:
     _target_: Group
@@ -47,22 +56,27 @@ data:
           progress_gt: progress_gt
           stage_progress_gt: stage_progress_gt
           progress: progress  # Required for training, not for inference
+          progress_predicted: progress_predicted
 
 # Weight loader - pretrained weights
-pytorch_weight_path: /cpfs01/user/baidexiang/test_ckpt/torch_ver/pi05_base/
+pytorch_weight_path: /cpfs01/shared/zhaolirui/ckpts/pi05/_official_ckpts/torch_ver/pi05_base
 pytorch_model_class: PI0Pytorch_Custom
+
+# checkpoint base directory
+checkpoint_base_dir: /nas/zhaolirui/Kai05-VLA/checkpoints
+
 # Training hyperparameters
 num_train_steps: 100000
 keep_period: 10000
-save_interval: 10000
+save_interval: 5000
 
 # Data loading
-num_workers: 1
-batch_size: 3  # For 1 GPU, use 128 for 8 GPUs
+num_workers: 0
+batch_size: 1  # For 1 GPU, use 128 for 8 GPUs
 
 # Training modes
 with_episode_start: false
 timestep_difference_mode: false
 stage_process_mode: false
 skip_norm_stats: true  # No norm stats used
-
+use_progress_predicted: true

@@ -3,6 +3,8 @@ import logging
 from pathlib import Path
 import random
 
+from pyarrow.util import _break_traceback_cycle_from_frame
+
 from lerobot.common.datasets.lerobot_dataset import LeRobotDataset
 from lerobot.common.datasets.lerobot_dataset import MultiLeRobotDataset
 import torch
@@ -34,6 +36,7 @@ class CustomLeRobotDataset(LeRobotDataset):
         video_backend: str | None = "pyav",
         # * Custom parameters
         n_history: int = 0,
+        n_future: int = 0,
         with_episode_start: bool = False,
         skip_sample_ratio_within_episode: float = 0.0,  # * 0 for no skipping, 0.5 for skipping first 50% samples in an episode
         timestep_difference_mode: bool = False,  # * Selecting samples from two different timesteps and do comparison as learning target.
@@ -77,6 +80,7 @@ class CustomLeRobotDataset(LeRobotDataset):
         )
         # Store custom parameters before calling parent __init__
         self.n_history = n_history
+        self.n_future = n_future
         self.with_episode_start = with_episode_start
         self.skip_sample_ratio_within_episode = skip_sample_ratio_within_episode
         self.timestep_difference_mode = timestep_difference_mode
@@ -134,82 +138,70 @@ class CustomLeRobotDataset(LeRobotDataset):
         - Progress labels
         """
         episode_level_dict = {}
-        item_sequence = []
-        final_item = {}
+        output_item = {}
 
         # Get main sample
         item = self.get_sample_with_imgs_from_idx(idx)
+        output_item.update(item)
 
         ep_idx = item["episode_index"].item()
         cur_timestamp = item["timestamp"].item()
 
-        _EP_IDX = ep_idx
-        _CUR_TIMESTAMP = cur_timestamp
+        if self.timestep_difference_mode:
+            random_item = self.handle_timestep_difference_mode(idx, ep_idx, item)
+            output_item.update(random_item)
+        
+        if self.with_episode_start:
+            episode_start_item = self.handle_episode_start_frame(idx, ep_idx, item)
+            output_item.update(episode_start_item)
+        
+        if self.n_history > 0:
+            for his_idx in range(-self.n_history, 0):
+                his_item = self.handle_history_frame(idx, ep_idx, his_idx, item, cur_timestamp)
+                output_item.update(his_item)
+
+        if self.n_future > 0:
+            for fut_idx in range(1, self.n_future + 1):
+                fut_item = self.handle_future_frame(idx, ep_idx, fut_idx, item, cur_timestamp)
+                output_item.update(fut_item)
 
         episode_level_dict["episode_length"] = self.meta.episodes[ep_idx]["length"]
 
         # Handle delta indices for action sequences
         if self.delta_indices is not None:
             episode_level_dict = self.handle_delta_indices(idx, ep_idx, episode_level_dict)
-
-        episode_level_dict["action_advantage"] = item.get("action_advantage", None)
+        if 'action_advantage' in item:
+            episode_level_dict["action_advantage"] = item["action_advantage"]
 
         # Add task as a string
         task_idx = item["task_index"].item()
         episode_level_dict["task"] = self.meta.tasks[task_idx]
 
-        item_sequence.append(item.copy())
-
-        # Handle timestep difference mode
-        if self.timestep_difference_mode:
-            final_item = self.handle_timestep_difference_mode(idx, ep_idx, final_item, _EP_IDX, _CUR_TIMESTAMP)
-
-        # Handle episode start frame
-        if self.with_episode_start:
-            final_item = self.handle_episode_start_frame(idx, ep_idx, item, final_item)
-
-        # Handle history frames
-        N_HISTORY, item_sequence = self.handle_history_frames(
-            idx, ep_idx, cur_timestamp=cur_timestamp, item_sequence=item_sequence
-        )
-        # Unpack the item_sequence
-        for his_idx in range(-N_HISTORY, 0):
-            his_pos_in_sequence = his_idx - 1
-            his_item = item_sequence[his_pos_in_sequence]
-
-            _keys = list(his_item.keys())
-            for key in _keys:
-                new_key = f"his_{his_idx}_{key}"
-                his_item[new_key] = his_item.pop(key)
-                final_item = {**final_item, **his_item}
-
-        final_item = {**final_item, **item_sequence[-1]}
-
         # Append episode-level data
-        final_item = {**final_item, **episode_level_dict}
+        output_item.update(episode_level_dict)
 
         # Compute progress labels
         if self.timestep_difference_mode:
             if self.stage_process_mode:
-                stage_progress_gt_random = final_item["his_-100_stage_progress_gt"].item()
-                stage_progress_gt = final_item["stage_progress_gt"].item()
-                final_item["progress"] = stage_progress_gt - stage_progress_gt_random
+                stage_progress_gt_random = output_item["his_-100_stage_progress_gt"].item()
+                stage_progress_gt = output_item["stage_progress_gt"].item()
+                output_item["progress"] = stage_progress_gt - stage_progress_gt_random
             else:
-                progress_gt_random = final_item["his_-100_progress_gt"].item()
-                progress_gt = final_item["progress_gt"].item()
-                final_item["progress"] = progress_gt - progress_gt_random
+                progress_gt_random = output_item["his_-100_progress_gt"].item()
+                progress_gt = output_item["progress_gt"].item()
+                output_item["progress"] = progress_gt - progress_gt_random
         elif self.stage_process_mode:
-            stage_progress_gt = final_item["stage_progress_gt"].item()
-            final_item["progress"] = stage_progress_gt
+            stage_progress_gt = output_item["stage_progress_gt"].item()
+            output_item["progress"] = stage_progress_gt
         elif self.use_progress_predicted:
-            progress_predicted = final_item["progress_predicted"].item()
-            final_item["progress"] = progress_predicted
+            progress_predicted = output_item["progress_predicted"].item()
+            output_item["progress"] = progress_predicted
         else:
-            progress_gt = final_item["progress_gt"].item()
-            final_item["progress"] = progress_gt
+            progress_gt = output_item["progress_gt"].item()
+            output_item["progress"] = progress_gt
 
-        return final_item
-
+        return output_item
+    
     def handle_delta_indices(self, idx, ep_idx, episode_level_dict) -> dict:
         query_indices = None
         arr_idx = self.ep_idx_to_arr_idx.get(ep_idx, ep_idx) if self.episodes else ep_idx
@@ -221,10 +213,12 @@ class CustomLeRobotDataset(LeRobotDataset):
             episode_level_dict[key] = val
         return episode_level_dict
 
-    def handle_timestep_difference_mode(self, idx, ep_idx, final_item, _EP_IDX, _CUR_TIMESTAMP) -> dict:
+    def handle_timestep_difference_mode(self, idx, item) -> dict:
         """
         同一个视频片段里的不同两帧？
         """
+        ep_idx = item["episode_index"].item()
+        cur_timestamp = item["timestamp"].item()
         random_timestep_name = -100
         arr_idx = self.ep_idx_to_arr_idx.get(ep_idx, ep_idx) if self.episodes else ep_idx
         ep_start_idx = self.episode_data_index["from"][arr_idx].item()
@@ -238,7 +232,7 @@ class CustomLeRobotDataset(LeRobotDataset):
 
             ep_idx_check = random_item["episode_index"].item()
             cur_timestamp_check = random_item["timestamp"].item()
-            if ep_idx_check != _EP_IDX or cur_timestamp_check == _CUR_TIMESTAMP:
+            if ep_idx_check != ep_idx or cur_timestamp_check == cur_timestamp:
                 print(
                     f"Randomly selected invalid timestep, re-sampling. For global idx: {random_idx}, ep_idx: {ep_idx_check}, cur_timestamp: {cur_timestamp_check}"
                 )
@@ -250,8 +244,7 @@ class CustomLeRobotDataset(LeRobotDataset):
             new_key = f"his_{random_timestep_name}_{key}"
             random_item[new_key] = random_item.pop(key)
 
-        final_item = {**final_item, **random_item}
-        return final_item
+        return random_item
 
     def handle_episode_start_frame(self, idx, ep_idx, item, final_item) -> dict:
         start_frame_name = -100
@@ -276,31 +269,45 @@ class CustomLeRobotDataset(LeRobotDataset):
             new_key = f"his_{start_frame_name}_{key}"
             start_item[new_key] = start_item.pop(key)
 
-        final_item = {**final_item, **start_item}
-        return final_item
+        return start_item
 
-    def handle_history_frames(self, idx, ep_idx, cur_timestamp, item_sequence) -> dict:
-        N_HISTORY = self.n_history
-        for his_idx in range(-N_HISTORY, 0):
-            check_his_idx = his_idx + idx
-            check_item = self.hf_dataset[check_his_idx]
-            check_episode_ind = check_item["episode_index"].item()
-            check_timestamp = check_item["timestamp"].item()
+    def handle_history_frame(self, idx, ep_idx, his_idx, item, cur_timestamp) -> dict:
+        check_his_idx = his_idx + idx
+        check_item = self.get_sample_with_imgs_from_idx(check_his_idx)
+        check_episode_ind = check_item['episode_index'].item()
+        check_timestamp   = check_item['timestamp'].item()
 
-            if check_his_idx >= 0 and check_episode_ind == ep_idx and check_timestamp < cur_timestamp:
-                his_item = check_item
+        if check_his_idx >= 0 and check_episode_ind == ep_idx and check_timestamp < cur_timestamp:
+            his_item = check_item
+        else:
+            # * idx is the start of a new episode, repeat it as its history
+            his_item = item.copy()
+
+        # * add prefix and merge to final_item
+        for key in list(his_item.keys()):
+            new_key = f"his_{his_idx}_{key}"
+            his_item[new_key] = his_item.pop(key)
+        return his_item
+    
+    def handle_future_frame(self, idx, ep_idx, fut_idx, item, cur_timestamp) -> dict:
+        check_fut_idx = idx + fut_idx
+        if check_fut_idx < self.num_frames:
+            check_item = self.get_sample_with_imgs_from_idx(check_fut_idx)
+            check_episode_ind = check_item['episode_index'].item()
+            check_timestamp   = check_item['timestamp'].item()
+            if check_episode_ind == ep_idx and check_timestamp > cur_timestamp:
+                fut_item = check_item
             else:
-                # idx is the start of a new episode, repeat it as its history
-                his_item = self.get_sample_with_imgs_from_idx(idx)
-
-            his_episode_ind = his_item["episode_index"].item()
-            his_timestamp = his_item["timestamp"].item()
-            assert (
-                his_episode_ind == ep_idx and his_timestamp <= cur_timestamp
-            ), f"his_item['episode_index']: {his_episode_ind}, ep_idx: {ep_idx}. his_item['timestamp']: {his_timestamp}, cur_timestamp: {cur_timestamp}"
-
-            item_sequence.insert(-1, his_item.copy())  # Note the inserting position
-        return N_HISTORY, item_sequence
+                # * idx is the start of a new episode, repeat it as its future
+                fut_item = item.copy()
+        else:
+            # * End of episode reached or dataset bound exceeded: repeat current frame (padding)
+            fut_item = item.copy()
+        
+        for key in list(fut_item.keys()):
+            new_key = f"fut_{fut_idx}_{key}"
+            fut_item[new_key] = fut_item.pop(key)
+        return fut_item
 
 
 class CustomMultiLeRobotDataset(MultiLeRobotDataset, torch.utils.data.Dataset):

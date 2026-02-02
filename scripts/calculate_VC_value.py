@@ -305,12 +305,15 @@ def run_gpu_worker(gpu_id: int, worker_id: int, features: Dict[str, torch.Tensor
         torch.cuda.synchronize()
         print(f"GPU {gpu_id} Worker {worker_id}: 已完成并清理显存")
 
-def write_parquet(result: Tuple, source_path: Path, chunk_size: int = 1000):
+def write_parquet(result: Tuple, source_path: Path, camera_keys: List[str], chunk_size: int = 1000):
     data_parquet = source_path / "data"
     progress_predictions, episode_index = result
     parquet_path = data_parquet / f"chunk-{episode_index//chunk_size:03d}" / f"episode_{episode_index:06d}.parquet"
     df = pd.read_parquet(parquet_path)
-    df['progress_predicted'] = progress_predictions
+    # 根据摄像头配置生成唯一的列名，避免不同配置结果互相覆盖
+    camera_suffix = "_".join(sorted(camera_keys))
+    column_name = f'VC_value_{camera_suffix}'
+    df[column_name] = progress_predictions
     df.to_parquet(parquet_path, index=False)
 
 def main(workers_per_gpu: int = 1, user_args: argparse.Namespace = None):
@@ -380,7 +383,7 @@ def main(workers_per_gpu: int = 1, user_args: argparse.Namespace = None):
                 result = result_queue.get()
                 results.append(result)
                 pbar.update(1)
-                write_parquet(result, source_path, chunk_size=user_args.chunk_size)
+                write_parquet(result, source_path, camera_keys=user_args.camera_keys, chunk_size=user_args.chunk_size)
         
         # 等待所有worker完成
         for p in workers:
@@ -400,7 +403,7 @@ def main(workers_per_gpu: int = 1, user_args: argparse.Namespace = None):
                               total=len(all_tasks), 
                               desc="Processing episodes"):
                 results.append(result)
-                write_parquet(result, source_path, chunk_size=user_args.chunk_size)
+                write_parquet(result, source_path, camera_keys=user_args.camera_keys, chunk_size=user_args.chunk_size)
 
     print(f"处理完成，共 {len(results)} 个episode")
 

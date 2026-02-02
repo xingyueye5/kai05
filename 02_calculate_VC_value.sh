@@ -10,7 +10,9 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 # 超参数配置
 SOURCE_PATH=${1}
-CAMERA_KEYS=${2:-top_head}
+# 支持逗号分隔的多个相机，例如: top_head,front_camera,side_camera
+CAMERA_KEYS_INPUT=${2:-top_head}
+CAMERA_KEYS=${CAMERA_KEYS_INPUT//,/ }  # 将逗号替换为空格
 TOP_N=${3:--1}
 TIME_RANGE=${4:-0.6}
 QUERY_CHUNK_SIZE=${5:-128}

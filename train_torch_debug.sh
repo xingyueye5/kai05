@@ -3,7 +3,7 @@
 # config_name=${1}
 # ngpus_per_node=${2}
 
-config_name=/cpfs01/user/zhaolirui/Kai05-VLA/configs/train/value_model/pi05_value_model_v9-3_0108_4556_1T_TL_VC.yaml
+config_name=/cpfs01/user/zhaolirui/Kai05-VLA/configs/train/value_model/debug.yaml
 exp_name=debug
 ngpus_per_node=1
 # export TORCH_ELASTIC_LOG_LEVEL=DEBUG

@@ -124,3 +124,13 @@ class Pi0Config_Custom(Pi0Config):
 
     p_mask_ego_state: float = 0.0
     cfg_scale: float = 1.0
+
+    # * TD learning
+    value_TD_learning: bool = False
+    value_TD_TAU: float = 0.005
+    value_gamma: float = 0.99
+    value_terminal_window: int = 10
+    value_failure_reward: float = -1.0
+
+    # * Progress loss
+    p_with_progress_loss: float = 1.0

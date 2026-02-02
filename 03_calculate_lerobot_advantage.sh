@@ -7,49 +7,76 @@ set -o pipefail
 # ============================================================
 
 # 原始数据集路径
-ORIGINAL_REPO_ID=/cpfs01/shared/kai05_data/kai0_data/short_sleeve/flatten_fold/v9-3/v9-3_0108_4556
+ORIGINAL_REPO_ID=/cpfs01/shared/kai05_data_train/agilex/flatten_fold/short_sleeve/flatten_fold_standard_all_lerobot_2012
+# 自动生成训练数据集路径（kai05_data -> kai05_data_train，如果已经是 kai05_data_train 则不变）
+if [[ "$ORIGINAL_REPO_ID" == *"kai05_data_train"* ]]; then
+    # 已经是 kai05_data_train，不做替换
+    TRAIN_REPO_ID="$ORIGINAL_REPO_ID"
+else
+    # kai05_data -> kai05_data_train
+    TRAIN_REPO_ID="${ORIGINAL_REPO_ID/kai05_data/kai05_data_train}"
+fi
 
 # ---------- 模式配置 ----------
-# ADVANTAGE_TYPE 支持以下格式:
+# ADVANTAGE_TYPES 支持多个值，用逗号分隔:
 #   - "binary"       : 二分类 (negative/positive)
 #   - "<N>bins"      : N分类，如 "10bins", "5bins"
-ADVANTAGE_TYPE="100bins"
+# 示例: "binary,5bins,10bins,100bins"
+ADVANTAGE_TYPES="binary,5bins,10bins,100bins"
 
 # ---------- 比例配置 (仅 binary 模式生效) ----------
 # POSITIVE_RATE: positive 的比例 (百分比)，如 30 表示 top 30% 为 positive
 POSITIVE_RATE=30
 
 # ---------- 其他参数 ----------
-PARQUET_PATH="progress_predicted"
+PARQUET_PATH="data"
 CHUNK_SIZE=50
-ADVANTAGE_SOURCE="progress_predicted"
+ADVANTAGE_SOURCE="VC_value_top_head"
 
 # ============================================================
 # 参数验证
 # ============================================================
 
-validate_params() {
-    # 验证 ADVANTAGE_TYPE 格式
-    if [[ "$ADVANTAGE_TYPE" == "binary" ]]; then
+validate_single_type() {
+    local adv_type="$1"
+    # 验证单个 ADVANTAGE_TYPE 格式
+    if [[ "$adv_type" == "binary" ]]; then
         # binary 模式：验证 POSITIVE_RATE
         if ! [[ "$POSITIVE_RATE" =~ ^[0-9]+$ ]] || [ "$POSITIVE_RATE" -lt 1 ] || [ "$POSITIVE_RATE" -gt 99 ]; then
             echo "错误: POSITIVE_RATE 必须是 1-99 之间的整数"
             echo "当前值: $POSITIVE_RATE"
-            exit 1
+            return 1
         fi
-    elif [[ "$ADVANTAGE_TYPE" =~ ^[0-9]+bins$ ]]; then
+    elif [[ "$adv_type" =~ ^[0-9]+bins$ ]]; then
         # bins 模式：验证 bins 数量
-        BINS_NUM="${ADVANTAGE_TYPE%bins}"
-        if [ "$BINS_NUM" -lt 2 ]; then
+        local bins_num="${adv_type%bins}"
+        if [ "$bins_num" -lt 2 ]; then
             echo "错误: bins 数量必须 >= 2"
-            echo "当前值: $BINS_NUM"
-            exit 1
+            echo "当前值: $bins_num"
+            return 1
         fi
     else
         echo "错误: ADVANTAGE_TYPE 必须是 'binary' 或 '<N>bins' (如 '10bins')"
-        echo "当前值: $ADVANTAGE_TYPE"
-        exit 1
+        echo "当前值: $adv_type"
+        return 1
     fi
+    return 0
+}
+
+validate_all_params() {
+    # 将逗号分隔的字符串转为数组
+    IFS=',' read -ra TYPES_ARRAY <<< "$ADVANTAGE_TYPES"
+    
+    echo "验证所有 ADVANTAGE_TYPE..."
+    for adv_type in "${TYPES_ARRAY[@]}"; do
+        # 去除空格
+        adv_type=$(echo "$adv_type" | xargs)
+        if ! validate_single_type "$adv_type"; then
+            exit 1
+        fi
+        echo "  ✓ $adv_type"
+    done
+    echo "验证通过!"
 }
 
 # ============================================================
@@ -57,12 +84,13 @@ validate_params() {
 # ============================================================
 
 generate_suffix() {
-    if [[ "$ADVANTAGE_TYPE" == "binary" ]]; then
+    local adv_type="$1"
+    if [[ "$adv_type" == "binary" ]]; then
         # binary 模式：后缀包含比例信息
         echo "binary_p${POSITIVE_RATE}"
     else
         # bins 模式：直接使用 bins 数量
-        echo "$ADVANTAGE_TYPE"
+        echo "$adv_type"
     fi
 }
 
@@ -116,53 +144,99 @@ copy_dataset() {
 }
 
 # ============================================================
-# 主流程
+# 处理单个 ADVANTAGE_TYPE
 # ============================================================
 
-main() {
-    # 参数验证
-    validate_params
+process_single_type() {
+    local adv_type="$1"
+    local index="$2"
+    local total="$3"
 
     # 生成后缀和目标路径
-    SUFFIX=$(generate_suffix)
-    REPO_ID="${ORIGINAL_REPO_ID}_${SUFFIX}"
+    local suffix=$(generate_suffix "$adv_type")
+    local repo_id="${TRAIN_REPO_ID}_${suffix}"
+
+    echo ""
+    echo "############################################################"
+    echo "# 处理 [$index/$total]: $adv_type"
+    echo "############################################################"
 
     # 打印配置信息
     echo "=========================================="
     echo "配置信息:"
-    echo "  ADVANTAGE_TYPE:   $ADVANTAGE_TYPE"
-    if [[ "$ADVANTAGE_TYPE" == "binary" ]]; then
+    echo "  ADVANTAGE_TYPE:   $adv_type"
+    if [[ "$adv_type" == "binary" ]]; then
         echo "  POSITIVE_RATE:    ${POSITIVE_RATE}%"
     fi
     echo "  CHUNK_SIZE:       $CHUNK_SIZE"
     echo "  ADVANTAGE_SOURCE: $ADVANTAGE_SOURCE"
     echo "  PARQUET_PATH:     $PARQUET_PATH"
-    echo "  输出目录后缀:     $SUFFIX"
+    echo "  输出目录:         $repo_id"
     echo "=========================================="
 
     # 复制数据集
-    copy_dataset "$ORIGINAL_REPO_ID" "$REPO_ID"
+    copy_dataset "$ORIGINAL_REPO_ID" "$repo_id"
 
     # 执行主脚本
     echo "=========================================="
     echo "执行 Python 脚本..."
     echo "=========================================="
 
-    cd /cpfs01/user/zhaolirui/Kai05-VLA
-    source .venv/bin/activate
-
     python scripts/calculate_lerobot_advantage.py \
-        --repo_id "$REPO_ID" \
+        --repo_id "$repo_id" \
         --parquet_path "$PARQUET_PATH" \
         --chunk_size "$CHUNK_SIZE" \
         --advantage_source "$ADVANTAGE_SOURCE" \
-        --advantage_type "$ADVANTAGE_TYPE" \
+        --advantage_type "$adv_type" \
         --positive_rate "$POSITIVE_RATE"
 
     echo "=========================================="
-    echo "处理完成!"
-    echo "输出目录: $REPO_ID"
+    echo "[$index/$total] 处理完成: $adv_type"
+    echo "输出目录: $repo_id"
     echo "=========================================="
+}
+
+# ============================================================
+# 主流程
+# ============================================================
+
+main() {
+    # 参数验证
+    validate_all_params
+
+    # 将逗号分隔的字符串转为数组
+    IFS=',' read -ra TYPES_ARRAY <<< "$ADVANTAGE_TYPES"
+    local total=${#TYPES_ARRAY[@]}
+
+    # 打印总体信息
+    echo ""
+    echo "############################################################"
+    echo "# 批量处理 ADVANTAGE_TYPE"
+    echo "# 共 $total 个类型: $ADVANTAGE_TYPES"
+    echo "############################################################"
+
+    cd /cpfs01/user/zhaolirui/Kai05-VLA
+    source .venv/bin/activate
+
+    # 循环处理每个类型
+    local index=1
+    for adv_type in "${TYPES_ARRAY[@]}"; do
+        # 去除空格
+        adv_type=$(echo "$adv_type" | xargs)
+        process_single_type "$adv_type" "$index" "$total"
+        ((index++))
+    done
+
+    echo ""
+    echo "############################################################"
+    echo "# 全部处理完成! 共 $total 个类型"
+    echo "############################################################"
+    echo "处理的类型:"
+    for adv_type in "${TYPES_ARRAY[@]}"; do
+        adv_type=$(echo "$adv_type" | xargs)
+        local suffix=$(generate_suffix "$adv_type")
+        echo "  - $adv_type -> ${TRAIN_REPO_ID}_${suffix}"
+    done
 }
 
 # 执行主函数
