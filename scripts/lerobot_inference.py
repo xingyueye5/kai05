@@ -148,10 +148,11 @@ def main():
             if output_path.exists():
                 print(f"文件 {output_path} 已存在，跳过...")
                 continue
+
             if is_1timestep:
                 results = evaluator.evaluate_video_1timestep_advantage(
                     video_paths=video_paths,
-                    prompt="Fold the cloth.",
+                    prompt=evaluator.config.data.default_prompt,
                     batch_size=400,
                     frame_interval=1,  # 1为全评估，2为隔一帧评估，3为每3帧评估一次
                     min_frame_index=min_frame_index,
@@ -161,7 +162,7 @@ def main():
             else:
                 results = evaluator.evaluate_video_2timesteps_advantages(
                     video_paths=video_paths,
-                    prompt="Fold the cloth.",
+                    prompt=evaluator.config.data.default_prompt,
                     batch_size=160,
                     frame_interval=1,  # 1为全评估，2为隔一帧评估，3为每3帧评估一次
                     relative_interval=relative_interval,
