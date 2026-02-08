@@ -118,7 +118,6 @@ class CustomLeRobotDataset(LeRobotDataset):
                 print(f"Error decoding video frames for ep_idx {ep_idx} at idx {idx}: {e}")
 
             item = {**video_frames, **item}
-
         if self.image_transforms is not None:
             image_keys = self.meta.camera_keys
             for cam in image_keys:
@@ -164,6 +163,12 @@ class CustomLeRobotDataset(LeRobotDataset):
             for fut_idx in range(1, self.n_future + 1):
                 fut_item = self.handle_future_frame(idx, ep_idx, fut_idx, item, cur_timestamp)
                 output_item.update(fut_item)
+        
+        # * Add is_failure_data to output_item
+        if "is_failure_data" in item:
+            output_item["is_failure_data"] = item["is_failure_data"]
+        else:
+            output_item["is_failure_data"] = False
 
         episode_level_dict["episode_length"] = self.meta.episodes[ep_idx]["length"]
 
@@ -194,7 +199,7 @@ class CustomLeRobotDataset(LeRobotDataset):
             stage_progress_gt = output_item["stage_progress_gt"].item()
             output_item["progress"] = stage_progress_gt
         elif self.use_progress_predicted:
-            progress_predicted = output_item["progress_predicted"].item()
+            progress_predicted = output_item["VC_value_top_head"].item()
             output_item["progress"] = progress_predicted
         else:
             progress_gt = output_item["progress_gt"].item()

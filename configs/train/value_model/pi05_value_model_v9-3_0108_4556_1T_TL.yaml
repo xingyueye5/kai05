@@ -2,7 +2,7 @@
 # Value head training config for Pika dataset
 
 _target_: TrainConfig
-name: pi05_value_model_v9-3_0108_4556_1T_TL
+name: pi05_value_flatten_fold_standard_all_lerobot_2012
 
 # Model configuration
 model:

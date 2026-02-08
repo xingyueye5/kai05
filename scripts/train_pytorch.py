@@ -671,6 +671,7 @@ def train_loop(config: _config.TrainConfig):
 def main():
     init_logging()
     config = _config.cli()
+    breakpoint()
     train_loop(config)
 
 
@@ -715,7 +716,6 @@ def main_custom():
     config = tyro.extras.overridable_config_cli({base_config.name: (base_config.name, base_config)})
 
     train_loop(config)
-
 
 if __name__ == "__main__":
     main_custom()

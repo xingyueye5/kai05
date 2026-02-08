@@ -2,7 +2,7 @@
 # Value head training config for Pika dataset
 
 _target_: TrainConfig
-name: debug_two_losses
+name: pi05_value_flatten_fold_standard_all_lerobot_2012_split_1T_TL_VC
 
 # Model configuration
 model:
@@ -11,17 +11,8 @@ model:
   with_value_head: true
   loss_value_weight: 1.0
   loss_value_use_bce: false
-  # * Progress loss
-  p_with_progress_loss: 1.0  
-  # * TD learning 
-  value_TD_learning: true
-  value_TD_TAU: 0.1
-  value_gamma: 0.99
-  value_terminal_window: 10
-  value_failure_reward: -1.0
-  
   loss_action_weight: 0.0  # No action loss
-  p_mask_ego_state: 1.0  # Mask ego state for value model training
+  p_mask_ego_state: 1.0
   timestep_difference_mode: false
   discrete_state_input: false  # Not using states into prompt
   download_path: /cpfs01/shared/zhaolirui/ckpts/paligemma_tokenizer.model
@@ -31,15 +22,14 @@ split: all
 data:
   _target_: LerobotPikaDataConfig
   repo_id: 
-    - /cpfs01/shared/kai05_data_train/kai0_data/short_sleeve/flatten_fold/v9-3/v9-3_0108_4556/split_1_0.1
-  base_config:
-    _target_: DataConfig
-    prompt_from_task: false
+    - /cpfs01/shared/kai05_data_train/agilex/flatten_fold/short_sleeve/flatten_fold_standard_all_lerobot_2012_split/split_0_0.1
   assets:
     _target_: AssetsConfig
-    assets_dir: /cpfs01/shared/kai05_data_train/kai0_data/short_sleeve/flatten_fold/v9-3/v9-3_0108_4556
-    asset_id: split_1_0.1
-  default_prompt: Fold the cloth.
+    assets_dir: /cpfs01/shared/kai05_data_train/agilex/flatten_fold/short_sleeve/flatten_fold_standard_all_lerobot_2012_split/
+    asset_id: split_0_0.1
+  base_config:
+    _target_: DataConfig
+    prompt_from_task: true
   # Repack transforms for image/state/action mapping
   repack_transforms:
     _target_: Group
@@ -50,20 +40,14 @@ data:
             top_head: observation.images.top_head
             hand_left: observation.images.hand_left
             hand_right: observation.images.hand_right
-            fut_1_top_head: observation.images.top_head
-            fut_1_hand_left: observation.images.hand_left
-            fut_1_hand_right: observation.images.hand_right
           state: observation.state
+          prompt: prompt
           actions: action
           frame_index: frame_index
           progress_gt: progress_gt
           stage_progress_gt: stage_progress_gt
           progress: progress  # Required for training, not for inference
-          progress_predicted: progress_predicted
-      
-          episode_length: episode_length
-          episode_index: episode_index
-          is_failure_data: is_failure_data
+          VC_value_top_head: VC_value_top_head
 
 # Weight loader - pretrained weights
 pytorch_weight_path: /cpfs01/shared/zhaolirui/ckpts/pi05/_official_ckpts/torch_ver/pi05_base
@@ -78,8 +62,8 @@ keep_period: 10000
 save_interval: 5000
 
 # Data loading
-num_workers: 0
-batch_size: 4  # For 1 GPU, use 128 for 8 GPUs
+num_workers: 32
+batch_size: 128  # For 1 GPU, use 128 for 8 GPUs
 
 # Training modes
 with_episode_start: false
@@ -87,4 +71,3 @@ timestep_difference_mode: false
 stage_process_mode: false
 skip_norm_stats: true  # No norm stats used
 use_progress_predicted: true
-n_future: 1

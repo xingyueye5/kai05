@@ -30,13 +30,22 @@ class PikaInputs(transforms.DataTransformFn):
     # replaced with black images and the corresponding `image_mask` will be set to False.
     EXPECTED_CAMERAS: ClassVar[tuple[str, ...]] = ("top_head", "hand_left", "hand_right")
 
-    required_rename_map = {"top_head": "base_0_rgb", "hand_left": "left_wrist_0_rgb", "hand_right": "right_wrist_0_rgb"}
+    required_rename_map = {
+        "top_head": "base_0_rgb", 
+        "hand_left": "left_wrist_0_rgb", 
+        "hand_right": "right_wrist_0_rgb"
+    }
 
     # * Not required cameras, can be ignored if not in the dataloader
     optional_rename_map = {
         "his_-100_top_head": "base_-100_rgb",
         "his_-100_hand_left": "left_wrist_-100_rgb",
         "his_-100_hand_right": "right_wrist_-100_rgb",
+
+        # * future frames
+        "fut_1_top_head": "base_1_rgb",
+        "fut_1_hand_left": "left_wrist_1_rgb",
+        "fut_1_hand_right": "right_wrist_1_rgb",
     }
 
     all_rename_map = {**required_rename_map, **optional_rename_map}
@@ -142,6 +151,9 @@ class PikaInputs(transforms.DataTransformFn):
         # assert "episode_length" in data, "Episode ID is required for Aloha policy inputs."
         if "episode_length" in data:
             inputs["episode_length"] = data["episode_length"]
+
+        if "is_failure_data" in data:
+            inputs["is_failure_data"] = data["is_failure_data"]
 
         if "action_advantage" in data:
             action_advantage = data["action_advantage"]

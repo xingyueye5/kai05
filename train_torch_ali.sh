@@ -56,4 +56,4 @@ torchrun \
     --node_rank=${RANK} \
     --master_addr=${MASTER_ADDR} \
     --master_port=${MASTER_PORT} \
-    scripts/train_pytorch.py ${RUNPATH} --exp_name=${RUNTIME} --overwrite > ./${LOG_OUTPUT_DIR}/${RUNTIME}.log 2>&1
+    scripts/train_pytorch.py ${RUNPATH} --exp_name=${RUNTIME}_${RUNNAME} --overwrite > ./${LOG_OUTPUT_DIR}/${RUNTIME}.log 2>&1

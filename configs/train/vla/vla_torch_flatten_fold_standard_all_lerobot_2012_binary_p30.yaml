@@ -2,19 +2,12 @@
 # Value head training config for Pika dataset
 
 _target_: TrainConfig
-name: torch_v9-3_0108_4556_binary_p30
+name: vla_torch_flatten_fold_standard_all_lerobot_2012_binary_p30
 
 # Model configuration
 model:
   _target_: Pi0Config_Custom
   pi05: true
-  with_value_head: false
-  loss_value_weight: 0
-  loss_value_use_bce: false
-  loss_action_weight: 1.0  # No action loss
-  p_mask_ego_state: 0
-  timestep_difference_mode: false
-  discrete_state_input: false  # Not using states into prompt
   download_path: /cpfs01/shared/zhaolirui/ckpts/paligemma_tokenizer.model
 
 # Data configuration
@@ -22,15 +15,14 @@ split: all
 data:
   _target_: LerobotPikaDataConfig
   repo_id: 
-    - /cpfs01/shared/kai05_data_train/kai0_data/short_sleeve/flatten_fold/v9-3/v9-3_0108_4556_binary_p30
+    - /cpfs01/shared/kai05_data_train/agilex/flatten_fold/short_sleeve/flatten_fold_standard_all_lerobot_2012_binary_p30
   base_config:
     _target_: DataConfig
     prompt_from_task: true
   assets:
     _target_: AssetsConfig
-    assets_dir: /cpfs01/shared/kai05_data_train/kai0_data/short_sleeve/flatten_fold/v9-3/
-    asset_id: v9-3_0108_4556_binary_p30
-  # default_prompt: Fold the cloth.
+    assets_dir: /cpfs01/shared/kai05_data_train/agilex/flatten_fold/short_sleeve/
+    asset_id: flatten_fold_standard_all_lerobot_2012_binary_p30
   # Repack transforms for image/state/action mapping
   repack_transforms:
     _target_: Group
@@ -60,10 +52,3 @@ save_interval: 5000
 # Data loading
 num_workers: 32
 batch_size: 128  # For 1 GPU, use 128 for 8 GPUs
-
-# Training modes
-with_episode_start: false
-timestep_difference_mode: false
-stage_process_mode: false
-skip_norm_stats: false  # No norm stats used
-use_progress_predicted: false

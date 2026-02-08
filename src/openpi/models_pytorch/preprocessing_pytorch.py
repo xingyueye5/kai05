@@ -351,6 +351,7 @@ def preprocess_observation_pytorch_custom(
             image_original=observation.image_original,
             episode_index=observation.episode_index,
             progress=observation.progress,
+            is_failure_data=observation.is_failure_data,
         )
     # * Simplified for sampling value
     return SimpleProcessedObservation(

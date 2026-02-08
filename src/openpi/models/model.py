@@ -112,6 +112,10 @@ class Observation(Generic[ArrayT]):
 
     progress: at.Float[ArrayT, "*b"] | None = None
 
+
+    is_failure_data: at.Bool[ArrayT, "*b"] | None = None
+    is_infer_data: at.Bool[ArrayT, "*b"] | None = None
+
     episode_length: at.Int[ArrayT, "*b"] | at.Float[ArrayT, "*b"] | None = None
 
     action_advantage: at.Int[ArrayT, "*b"] | at.Float[ArrayT, "*b"] | None = None
@@ -151,6 +155,8 @@ class Observation(Generic[ArrayT]):
             token_ar_mask=data.get("token_ar_mask"),
             token_loss_mask=data.get("token_loss_mask"),
             # * Custom
+            is_failure_data=data.get("is_failure_data", None),
+            is_infer_data=data.get("is_infer_data", None),
             frame_index=data.get("frame_index"),
             episode_length=data.get("episode_length"),
             action_advantage=data.get("action_advantage"),
@@ -166,6 +172,11 @@ class Observation(Generic[ArrayT]):
         result["image"] = result.pop("images")
         result["image_mask"] = result.pop("image_masks")
         return result
+    
+    def drop_images(self, image_keys):
+        for key in image_keys:
+            self.images.pop(key, None)
+            self.image_masks.pop(key, None)
 
 
 # Defines the format of the actions. This field is included as "actions" inside the dictionary

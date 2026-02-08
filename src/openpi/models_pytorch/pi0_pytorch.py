@@ -540,6 +540,7 @@ class PI0Pytorch_Custom(PI0Pytorch):
         self.loss_value_use_bce = getattr(config, "loss_value_use_bce", False)
         self.loss_action_weight = getattr(config, "loss_action_weight", 1.0)
         self.p_mask_ego_state = getattr(config, "p_mask_ego_state", 0.0)
+        self.p_with_progress_loss = getattr(config, "p_with_progress_loss", 0.0)
         self.timestep_difference_mode = getattr(config, "timestep_difference_mode", False)
 
         self.cfg_scale = getattr(config, "cfg_scale", 1.0)  # * Default 1.0, indicating high quality
@@ -579,7 +580,7 @@ class PI0Pytorch_Custom(PI0Pytorch):
         observation = _preprocessing.preprocess_observation_pytorch_custom(
             observation, train=train, return_full_obs=return_full_obs, apply_aug=False
         )  # ! Changed: Not applying aug for policy and reward model training.
-
+        
         full_obs = (
             list(observation.images.values()),
             list(observation.image_masks.values()),
@@ -748,7 +749,6 @@ class PI0Pytorch_Custom(PI0Pytorch):
         # 处理 future observation 用于 TD learning
         future_obs = None
         if self.TD_learning:
-            breakpoint()
             # 提取 future images (*_1_rgb) 作为 future observation
             future_obs = {}
             for k, v in observation.__dict__.items():
@@ -782,7 +782,7 @@ class PI0Pytorch_Custom(PI0Pytorch):
 
         x_t = time_expanded * noise + (1 - time_expanded) * actions
         u_t = noise - actions
-
+        
         if self.with_value_head:
             action_advantage = None  # * Not using action advantage for value learning and prediction.
         else:
@@ -852,6 +852,7 @@ class PI0Pytorch_Custom(PI0Pytorch):
             # TD Learning loss
             if self.TD_learning and future_obs is not None:
                 with torch.no_grad():
+                    breakpoint()
                     # 计算 reward 和 done
                     cur_frame_index = obs_full.frame_index.float()
                     episode_length = obs_full.episode_length.float()
@@ -924,15 +925,17 @@ class PI0Pytorch_Custom(PI0Pytorch):
         self.target_model.TD_learning = False
         self.target_model.target_model = None
         self.target_model.eval()
+        logging.info("Initialized Target Critic Network for TD Learning")
 
     def update_target_network(self):
         """使用 EMA 更新 target network"""
-        if not self.TD_learning or self.target_model is None:
+        assert self.TD_learning, "TD learning must be enabled to update the target network"
+        if self.target_model is None:
             return
         with torch.no_grad():
             for param, target_param in zip(self.parameters(), self.target_model.parameters()):
-                target_param.data.mul_(1 - self.TD_TAU)
-                target_param.data.add_(param.data * self.TD_TAU)
+                target_param.data.mul_(1 - self.TD_TAU)  # * 1 - tau
+                target_param.data.add_(param.data * self.TD_TAU)  # * tau * param
 
     @torch.no_grad()
     def sample_actions(
@@ -1111,7 +1114,5 @@ class PI0Pytorch_Custom(PI0Pytorch):
         # Apply sigmoid if using BCE loss, as the head doesn't have a final activation in that case
         if self.loss_value_use_bce:
             value_pred = torch.sigmoid(value_pred)
-
-        # breakpoint()
 
         return value_pred

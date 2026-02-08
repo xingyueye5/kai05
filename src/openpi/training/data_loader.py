@@ -159,6 +159,7 @@ def create_torch_dataset(
         split = config.split
         data_kwargs = dict(
             n_history=config.n_history,
+            n_future=config.n_future,
             with_episode_start=config.with_episode_start,
             skip_sample_ratio_within_episode=config.skip_sample_ratio_within_episode,
             timestep_difference_mode=config.timestep_difference_mode,

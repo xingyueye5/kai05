@@ -7,10 +7,11 @@ cd /cpfs01/user/zhaolirui/Kai05-VLA
 source .venv/bin/activate
 
 python data_merge_split/lerobot_split.py \
-    --source_path /cpfs01/shared/kai05_data_train/kai0_data/short_sleeve/flatten_fold/v9-3/v9-3_0108_4556/split_0_0.9 \
-    --dst_path /cpfs01/shared/kai05_data_train/kai0_data/short_sleeve/flatten_fold/v9-3/v9-3_0108_4556/split_0_0.9_split_16 \
-    --split_num 16 \
+    --source_path /cpfs01/shared/kai05_data_train/agilex/flatten_fold/short_sleeve/flatten_fold_standard_all_lerobot_2012 \
+    --dst_path /cpfs01/shared/kai05_data_train/agilex/flatten_fold/short_sleeve/flatten_fold_standard_all_lerobot_2012_split \
+    --split_ratio "0.1,0.9" \
     --seed 42 
 
 
-# --split_ratio "0.9,0.1" \
+# --split_num 16 \
+# --split_ratio "0.1,0.9" \

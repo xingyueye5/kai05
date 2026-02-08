@@ -3,7 +3,7 @@
 # config_name=${1}
 # ngpus_per_node=${2}
 
-config_name=/cpfs01/user/zhaolirui/Kai05-VLA/configs/train/value_model/debug.yaml
+config_name=/cpfs01/user/zhaolirui/Kai05-VLA/configs/train/value_model/pi05_value_flatten_fold_standard_all_lerobot_2012_split_1T_TL_VC.yaml
 exp_name=debug
 ngpus_per_node=1
 # export TORCH_ELASTIC_LOG_LEVEL=DEBUG

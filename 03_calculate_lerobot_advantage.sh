@@ -7,7 +7,7 @@ set -o pipefail
 # ============================================================
 
 # 原始数据集路径
-ORIGINAL_REPO_ID=/cpfs01/shared/kai05_data_train/agilex/flatten_fold/short_sleeve/flatten_fold_standard_all_lerobot_2012
+ORIGINAL_REPO_ID=/cpfs01/shared/kai05_data_train/kai0_data/short_sleeve/flatten_fold/v9-3/v9-3_0108_4556/split_0_0.9_split_16_merge
 # 自动生成训练数据集路径（kai05_data -> kai05_data_train，如果已经是 kai05_data_train 则不变）
 if [[ "$ORIGINAL_REPO_ID" == *"kai05_data_train"* ]]; then
     # 已经是 kai05_data_train，不做替换
@@ -29,9 +29,9 @@ ADVANTAGE_TYPES="binary,5bins,10bins,100bins"
 POSITIVE_RATE=30
 
 # ---------- 其他参数 ----------
-PARQUET_PATH="data"
+PARQUET_PATH="data_1T_TL_100000"
 CHUNK_SIZE=50
-ADVANTAGE_SOURCE="VC_value_top_head"
+ADVANTAGE_SOURCE="absolute_value"
 
 # ============================================================
 # 参数验证
@@ -154,7 +154,7 @@ process_single_type() {
 
     # 生成后缀和目标路径
     local suffix=$(generate_suffix "$adv_type")
-    local repo_id="${TRAIN_REPO_ID}_${suffix}"
+    local repo_id="${TRAIN_REPO_ID}_${PARQUET_PATH}_${suffix}"
 
     echo ""
     echo "############################################################"

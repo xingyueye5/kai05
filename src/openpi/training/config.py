@@ -533,7 +533,6 @@ class LerobotPikaDataConfig(DataConfigFactory):
 
         # Create model transforms
         model_transforms = ModelTransformFactory(default_prompt=self.default_prompt)(model_config)
-
         return dataclasses.replace(
             self.create_base_config(assets_dirs, model_config),
             repack_transforms=self.repack_transforms,
@@ -548,7 +547,7 @@ class TrainConfig:
     # Name of the config. Must be unique. Will be used to reference this config.
     name: tyro.conf.Suppress[str]
     # Project name.
-    project_name: str = "openpi"
+    project_name: str = "Kai05-VLA"
     # Experiment name. Will be used to name the metadata and checkpoint directories.
     exp_name: str = tyro.MISSING
 
@@ -609,6 +608,7 @@ class TrainConfig:
     split: str = "train"  # * Only use training tasks for training, choose from ['train', 'val', 'all']
 
     n_history: int = 0  # Number of history frames to use. If 0, no history will be used.
+    n_future: int = 0  # Number of future frames to use. If 0, no future will be used.
     with_episode_start: bool = False  # If true, will use the episode start frame as the first frame in the history.
     skip_sample_ratio_within_episode: float = 0.0
     # p_video_rewind: float = 0.
