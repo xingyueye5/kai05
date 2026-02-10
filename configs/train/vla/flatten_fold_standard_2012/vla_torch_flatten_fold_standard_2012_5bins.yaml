@@ -2,7 +2,7 @@
 # Value head training config for Pika dataset
 
 _target_: TrainConfig
-name: torch_v9-3_0108_4556_baseline
+name: vla_torch_flatten_fold_standard_2012_5bins
 
 # Model configuration
 model:
@@ -15,14 +15,14 @@ split: all
 data:
   _target_: LerobotPikaDataConfig
   repo_id: 
-    - /cpfs01/shared/kai05_data/kai0_data/short_sleeve/flatten_fold/v9-3/v9-3_0108_4556
+    - /cpfs01/shared/kai05_data_train/agilex/flatten_fold/short_sleeve/flatten_fold_standard_all_lerobot_2012_5bins
   base_config:
     _target_: DataConfig
     prompt_from_task: true
   assets:
     _target_: AssetsConfig
-    assets_dir: /cpfs01/shared/kai05_data/kai0_data/short_sleeve/flatten_fold/v9-3/
-    asset_id: v9-3_0108_4556
+    assets_dir: /cpfs01/shared/kai05_data_train/agilex/flatten_fold/short_sleeve/
+    asset_id: flatten_fold_standard_all_lerobot_2012_5bins
   # Repack transforms for image/state/action mapping
   repack_transforms:
     _target_: Group

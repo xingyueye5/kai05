@@ -82,7 +82,9 @@ def init_wandb(config: _config.TrainConfig, *, resuming: bool, enabled: bool = T
         raise FileNotFoundError(f"Checkpoint directory {ckpt_dir} does not exist.")
 
     if resuming:
-        run_id = (ckpt_dir / "wandb_id.txt").read_text().strip()
+        content = (ckpt_dir / "wandb_id.txt").read_text().strip()
+        first_line = content.splitlines()[0].strip() if content else ""
+        run_id = first_line.split("wandb_id=", 1)[-1].strip() if "wandb_id=" in first_line else first_line
         wandb.init(id=run_id, resume="must", project=config.project_name)
     else:
         wandb.init(
@@ -90,7 +92,12 @@ def init_wandb(config: _config.TrainConfig, *, resuming: bool, enabled: bool = T
             config=dataclasses.asdict(config),
             project=config.project_name,
         )
-        (ckpt_dir / "wandb_id.txt").write_text(wandb.run.id)
+        wandb_dir = getattr(wandb.run, "dir", "")
+        lines = [
+            f"wandb_id={wandb.run.id}",
+            f"wandb_dir={wandb_dir}",
+        ]
+        (ckpt_dir / "wandb_id.txt").write_text("\n".join(lines))
 
 
 def setup_ddp():

@@ -7,7 +7,7 @@ set -o pipefail
 # ============================================================
 
 # 原始数据集路径
-ORIGINAL_REPO_ID=/cpfs01/shared/kai05_data_train/kai0_data/short_sleeve/flatten_fold/v9-3/v9-3_0108_4556/split_0_0.9_split_16_merge
+ORIGINAL_REPO_ID=/cpfs01/shared/kai05_data_train/agilex/flatten_fold/short_sleeve/flatten_fold_xihu_1996
 # 自动生成训练数据集路径（kai05_data -> kai05_data_train，如果已经是 kai05_data_train 则不变）
 if [[ "$ORIGINAL_REPO_ID" == *"kai05_data_train"* ]]; then
     # 已经是 kai05_data_train，不做替换
@@ -22,16 +22,16 @@ fi
 #   - "binary"       : 二分类 (negative/positive)
 #   - "<N>bins"      : N分类，如 "10bins", "5bins"
 # 示例: "binary,5bins,10bins,100bins"
-ADVANTAGE_TYPES="binary,5bins,10bins,100bins"
+ADVANTAGE_TYPES="binary,5bins,10bins"
 
 # ---------- 比例配置 (仅 binary 模式生效) ----------
 # POSITIVE_RATE: positive 的比例 (百分比)，如 30 表示 top 30% 为 positive
 POSITIVE_RATE=30
 
 # ---------- 其他参数 ----------
-PARQUET_PATH="data_1T_TL_100000"
+PARQUET_PATH="data"
 CHUNK_SIZE=50
-ADVANTAGE_SOURCE="absolute_value"
+ADVANTAGE_SOURCE="VC_value_top_head"
 
 # ============================================================
 # 参数验证

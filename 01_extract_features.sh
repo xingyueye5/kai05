@@ -8,7 +8,7 @@ source .venv/bin/activate
 
 # 超参数配置
 DATASET_PATH=${1}
-CAMERA_KEYS=${2:-top_head}
+CAMERA_KEYS=${2}
 CKPT=${3:-/cpfs01/shared/zhaolirui/ckpts/siglip2-giant-opt-patch16-384}
 BATCH_SIZE=${4:-1024}
 FRAME_INTERVAL=${5:-1}

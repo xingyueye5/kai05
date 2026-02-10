@@ -410,9 +410,9 @@ def main(workers_per_gpu: int = 1, user_args: argparse.Namespace = None):
 def build_parsers():
     parser = argparse.ArgumentParser(description="优化Progress预测")
     parser.add_argument("--workers_per_gpu", type=int, default=1, help="每个GPU上的worker进程数量")
-    parser.add_argument("--source_path", type=str, default="/cpfs01/shared/kai05_data/kai0_data/short_sleeve/flatten_fold/v9-3/v9-3_0108_4556", help="数据集路径")
-    parser.add_argument("--time_range", type=float, default=None, help="时间窗口")
-    parser.add_argument("--window", type=float, default=0.3, help="时间窗口")
+    parser.add_argument("--source_path", type=str, help="数据集路径")
+    parser.add_argument("--time_range", type=float, help="时间窗口")
+    parser.add_argument("--window", type=float, default=0.6, help="时间窗口")
     parser.add_argument("--top_n", type=int, default=-1, help="top-n匹配数")
     parser.add_argument("--exclude_self_episode", action="store_true", help="是否排除自身episode")
     parser.add_argument("--exclude_self_frame_value", action="store_true", help="是否排除自身frame value")

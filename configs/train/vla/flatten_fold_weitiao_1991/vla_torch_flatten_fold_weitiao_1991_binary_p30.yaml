@@ -1,0 +1,50 @@
+# test_lerobot_dataset Config
+# Value head training config for Pika dataset
+
+_target_: TrainConfig
+name: vla_torch_flatten_fold_weitiao_1991_binary_p30
+
+# Model configuration
+model:
+  _target_: Pi0Config_Custom
+  pi05: true
+  download_path: /cpfs01/shared/zhaolirui/ckpts/paligemma_tokenizer.model
+
+# Data configuration
+split: all
+data:
+  _target_: LerobotPikaDataConfig
+  repo_id: 
+    - /cpfs01/shared/kai05_data_train/agilex/flatten_fold/short_sleeve/flatten_fold_weitiao_1991_data_binary_p30
+  base_config:
+    _target_: DataConfig
+    prompt_from_task: true
+  # Repack transforms for image/state/action mapping
+  repack_transforms:
+    _target_: Group
+    inputs:
+      - _target_: RepackTransform
+        structure:
+          images:
+            top_head: observation.images.top_head
+            hand_left: observation.images.hand_left
+            hand_right: observation.images.hand_right
+          state: observation.state
+          actions: action
+          prompt: prompt
+
+# Weight loader - pretrained weights
+pytorch_weight_path: /cpfs01/shared/zhaolirui/ckpts/pi05/_official_ckpts/torch_ver/pi05_base
+pytorch_model_class: PI0Pytorch_Custom
+
+# checkpoint base directory
+checkpoint_base_dir: /nas/zhaolirui/Kai05-VLA/checkpoints
+
+# Training hyperparameters
+num_train_steps: 100000
+keep_period: 10000
+save_interval: 5000
+
+# Data loading
+num_workers: 32
+batch_size: 128  # For 1 GPU, use 128 for 8 GPUs

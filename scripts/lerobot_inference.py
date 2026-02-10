@@ -51,15 +51,15 @@ MODELS_CONFIG_MAP = {
     'Flatten-Fold': {
         '1T_TL': {
             'name': '1T_TL',
-            'config_path': '/cpfs01/user/zhaolirui/Kai05-VLA/configs/train/value_model/pi05_value_model_v9-3_0108_4556_1T_TL.yaml',
-            'ckpt_dir': '/nas/zhaolirui/Kai05-VLA/checkpoints/pi05_value_model_v9-3_0108_4556_1T_TL/0127',
-            'ckpt_steps': 100000
+            'config_path': '/cpfs01/user/zhaolirui/Kai05-VLA/configs/train/value_model/pi05_value_flatten_fold_standard_all_lerobot_2012_split_1T_TL.yaml',
+            'ckpt_dir': '/nas/zhaolirui/Kai05-VLA/checkpoints/pi05_value_flatten_fold_standard_all_lerobot_2012_split_1T_TL/pi05_value_flatten_fold_standard_all_lerobot_2012_split_1T_TL_0207',
+            'ckpt_steps': 10000
         },
         '1T_TL_VC': {
             'name': '1T_TL_VC',
-            'config_path': '/cpfs01/user/zhaolirui/Kai05-VLA/configs/train/value_model/pi05_value_model_v9-3_0108_4556_1T_TL_VC.yaml',
-            'ckpt_dir': '/nas/zhaolirui/Kai05-VLA/checkpoints/pi05_value_model_v9-3_0108_4556_1T_TL_VC/0127',
-            'ckpt_steps': 100000
+            'config_path': '/cpfs01/user/zhaolirui/Kai05-VLA/configs/train/value_model/pi05_value_flatten_fold_standard_all_lerobot_2012_split_1T_TL_VC.yaml',
+            'ckpt_dir': '/nas/zhaolirui/Kai05-VLA/checkpoints/pi05_value_flatten_fold_standard_all_lerobot_2012_split_1T_TL_VC/0207_pi05_value_flatten_fold_standard_all_lerobot_2012_split_1T_TL_VC',
+            'ckpt_steps': 10000
         },
     }
 }
@@ -141,18 +141,28 @@ def main():
                 continue
             video_paths=(top_video, left_video, right_video)
             
-            min_frame_index = pq.read_table(parquet_file)['frame_index'].to_pylist()[0]
-            max_frame_index = pq.read_table(parquet_file)['frame_index'].to_pylist()[-1]
+            parquet_table = pq.read_table(parquet_file)
+            min_frame_index = parquet_table['frame_index'].to_pylist()[0]
+            max_frame_index = parquet_table['frame_index'].to_pylist()[-1]
 
             output_path=repo_id / f"data_{model_cfg['name']}_{model_cfg['ckpt_steps']}" / parquet_file.relative_to(repo_id / "data")
             if output_path.exists():
                 print(f"文件 {output_path} 已存在，跳过...")
                 continue
 
+            if evaluator.config.data.default_prompt is not None:
+                prompt = evaluator.config.data.default_prompt
+            elif evaluator.config.data.base_config.prompt_from_task is True:
+                task_index = int(parquet_table['task_index'].to_pylist()[0])
+                prompt = dataset_metadata.tasks.get(task_index)
+                if prompt is None:
+                    raise ValueError(f"task_index={task_index} 不在 dataset_metadata.tasks 中: {dataset_metadata.tasks}")
+            else:
+                raise ValueError(f"未知的prompt类型: {evaluator.config.data.base_config.prompt_from_task}")
             if is_1timestep:
                 results = evaluator.evaluate_video_1timestep_advantage(
                     video_paths=video_paths,
-                    prompt=evaluator.config.data.default_prompt,
+                    prompt=prompt,
                     batch_size=400,
                     frame_interval=1,  # 1为全评估，2为隔一帧评估，3为每3帧评估一次
                     min_frame_index=min_frame_index,
@@ -162,7 +172,7 @@ def main():
             else:
                 results = evaluator.evaluate_video_2timesteps_advantages(
                     video_paths=video_paths,
-                    prompt=evaluator.config.data.default_prompt,
+                    prompt=prompt,
                     batch_size=160,
                     frame_interval=1,  # 1为全评估，2为隔一帧评估，3为每3帧评估一次
                     relative_interval=relative_interval,

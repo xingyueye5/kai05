@@ -195,10 +195,19 @@ class DataConfigFactory(abc.ABC):
         if asset_id is None:
             return None
         try:
-            data_assets_dir = str(assets_dir / asset_id)
-            norm_stats = _normalize.load(_download.maybe_download(data_assets_dir))
-            logging.info(f"Loaded norm stats from {data_assets_dir}")
-            return norm_stats
+            if not isinstance(asset_id, list):
+                data_assets_dir = str(assets_dir / asset_id)
+                norm_stats = _normalize.load(_download.maybe_download(data_assets_dir))
+                logging.info(f"Loaded norm stats from {data_assets_dir}")
+                return norm_stats
+            else:
+                if len(asset_id) == 1:
+                    data_assets_dir = str(assets_dir / asset_id[0])
+                    norm_stats = _normalize.load(_download.maybe_download(data_assets_dir))
+                    logging.info(f"Loaded norm stats from {data_assets_dir}")
+                    return norm_stats
+                else: # TODO: implement the merge of the norm stats for multiple asset ids
+                    raise NotImplementedError("Merging norm stats for multiple asset ids is not implemented.")
         except FileNotFoundError:
             logging.info(f"Norm stats not found in {data_assets_dir}, skipping.")
         return None
