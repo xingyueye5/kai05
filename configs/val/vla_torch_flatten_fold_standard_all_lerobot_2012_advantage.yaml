@@ -8,7 +8,6 @@ name: vla_torch_flatten_fold_standard_all_lerobot_2012_baseline
 model:
   _target_: Pi0Config_Custom
   pi05: true
-  download_path: /cpfs01/shared/zhaolirui/ckpts/paligemma_tokenizer.model
 
 # Data configuration
 split: all
