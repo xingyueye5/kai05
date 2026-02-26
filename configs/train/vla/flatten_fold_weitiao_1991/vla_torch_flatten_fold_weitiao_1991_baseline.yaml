@@ -19,6 +19,10 @@ data:
   base_config:
     _target_: DataConfig
     prompt_from_task: true
+  assets:
+    _target_: AssetsConfig
+    assets_dir: /cpfs01/shared/kai05_data_train/agilex/flatten_fold/short_sleeve/
+    asset_id: flatten_fold_weitiao_1991
   # Repack transforms for image/state/action mapping
   repack_transforms:
     _target_: Group
