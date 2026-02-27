@@ -1,15 +1,10 @@
 """
-VC Value 预测结果可视化工具
-
-功能：
-1. 读取视频和 data parquet 文件中的 VC_value
-2. 生成进度曲线对比图 (jpg)
-3. 生成带进度曲线叠加的视频 (mp4)
+预测结果可视化工具：按 key（parquet 列名）读取数值，生成曲线图与叠加视频。
 
 使用示例：
-python visualize_VC_value.py /path/to/dataset --episode 0
-python visualize_VC_value.py /path/to/dataset --episode 0 --camera observation.images.top_head --camera_keys top_head
-python visualize_VC_value.py /path/to/dataset --episode 0 --camera_keys top_head front_camera
+python visualize_VC_value.py /path/to/dataset --episode 0 --value_source top_head
+python visualize_VC_value.py /path/to/dataset --episode 0 --value_source top_head --camera observation.images.top_head
+python visualize_VC_value.py /path/to/dataset --list_columns   # 查看 parquet 列名
 """
 
 import argparse
@@ -42,52 +37,17 @@ def get_episode_paths(dataset_path: Path, episode_idx: int, camera_key: str, chu
     }
 
 
-def get_vc_value_column_name(camera_keys: list) -> str:
-    """根据 camera_keys 生成 VC_value 列名"""
-    camera_suffix = "_".join(sorted(camera_keys))
-    return f'VC_value_{camera_suffix}'
-
-
-def load_progress_data(parquet_path: Path, camera_keys: list = None):
-    """加载 progress 数据
-    
-    Args:
-        parquet_path: parquet 文件路径
-        camera_keys: 相机 key 列表，用于确定 VC_value 列名
-    """
+def load_progress_data(parquet_path: Path, value_source: str):
+    """加载 progress 数据。value_source 即 parquet 中的列名（key）。"""
     df = pd.read_parquet(parquet_path)
-    
-    # 根据 camera_keys 确定列名
-    if camera_keys:
-        column_name = get_vc_value_column_name(camera_keys)
-    else:
-        # 如果没有指定，尝试自动找到 VC_value_ 开头的列
-        vc_columns = [col for col in df.columns if col.startswith('VC_value_')]
-        if len(vc_columns) == 1:
-            column_name = vc_columns[0]
-            print(f"  自动检测到 VC_value 列: {column_name}")
-        elif len(vc_columns) > 1:
-            print(f"  发现多个 VC_value 列: {vc_columns}")
-            print(f"  请使用 --camera_keys 指定要可视化的列")
-            column_name = vc_columns[0]  # 默认用第一个
-            print(f"  默认使用: {column_name}")
-        else:
-            # 兼容旧格式
-            if 'progress_predicted' in df.columns:
-                column_name = 'progress_predicted'
-                print(f"  使用旧格式列: {column_name}")
-            else:
-                raise ValueError(f"找不到 VC_value 列，可用列: {list(df.columns)}")
-    
-    if column_name not in df.columns:
-        available_vc = [col for col in df.columns if col.startswith('VC_value_')]
-        raise ValueError(f"列 '{column_name}' 不存在。可用的 VC_value 列: {available_vc}")
-    
+    if value_source not in df.columns:
+        raise ValueError(f"列 '{value_source}' 不存在。可用列: {list(df.columns)}")
     return {
         "frame_index": df["frame_index"].values,
         "progress_gt": df["progress_gt"].values,
-        "progress_predicted": df[column_name].values,
-        "column_name": column_name,
+        "progress_predicted": df[value_source].values,
+        "column_name": value_source,
+        "key": value_source,
     }
 
 
@@ -471,13 +431,13 @@ def main():
     parser.add_argument("--episode", type=int, default=None, help="要可视化的 episode 索引")
     parser.add_argument("--camera", type=str, default="observation.images.top_head", 
                         help="用于显示视频的相机名称 (默认: observation.images.top_head)")
-    parser.add_argument("--camera_keys", type=str, nargs="+", default=None,
-                        help="用于确定 VC_value 列名的相机 key 列表 (如: top_head front_camera)")
+    parser.add_argument("--value_source", type=str, default=None,
+                        help="要可视化的列名（key），即 parquet 中的列名，可视化时必填")
     parser.add_argument("--chunk_size", type=int, default=1000, help="chunk 大小 (默认: 1000)")
     parser.add_argument("--output_dir", type=str, default=None, help="输出目录 (默认: dataset_path/visualizations)")
     parser.add_argument("--list_episodes", action="store_true", help="列出可用的 episode")
     parser.add_argument("--list_cameras", action="store_true", help="列出可用的相机")
-    parser.add_argument("--list_vc_columns", action="store_true", help="列出可用的 VC_value 列")
+    parser.add_argument("--list_columns", action="store_true", help="列出 parquet 中的列名")
     parser.add_argument("--no_video", action="store_true", help="只生成曲线图，不生成视频")
     parser.add_argument("--no_plot", action="store_true", help="只生成视频，不生成曲线图")
     
@@ -504,28 +464,29 @@ def main():
             print(f"  - {c}")
         return
     
-    # 列出可用的 VC_value 列
-    if args.list_vc_columns:
+    # 列出 parquet 列名
+    if args.list_columns:
         data_dir = dataset_path / "data"
         if not data_dir.exists():
             print(f"目录不存在: {data_dir}")
             return
-        # 读取第一个 parquet 文件来获取列名
         for chunk_dir in sorted(data_dir.iterdir()):
             if chunk_dir.is_dir() and chunk_dir.name.startswith("chunk-"):
                 for parquet_file in sorted(chunk_dir.glob("episode_*.parquet")):
                     df = pd.read_parquet(parquet_file)
-                    vc_columns = [col for col in df.columns if col.startswith('VC_value_')]
-                    print(f"可用的 VC_value 列 ({len(vc_columns)} 个):")
-                    for col in vc_columns:
+                    print(f"列名 ({len(df.columns)} 个):")
+                    for col in df.columns:
                         print(f"  - {col}")
                     return
         print("没有找到 parquet 文件")
         return
     
-    # 检查 episode 参数
+    # 检查 episode 和 value_source 参数
     if args.episode is None:
         print("请指定 --episode 参数，或使用 --list_episodes 查看可用的 episode")
+        return
+    if args.value_source is None:
+        print("请指定 --value_source 参数（key，如 top_head）")
         return
     
     # 获取路径
@@ -535,8 +496,7 @@ def main():
     print(f"数据集: {dataset_path.name}")
     print(f"Episode: {episode_id}")
     print(f"视频相机: {args.camera}")
-    if args.camera_keys:
-        print(f"VC_value 相机: {args.camera_keys}")
+    print(f"value_source (key): {args.value_source}")
     
     # 检查文件是否存在
     if not paths["parquet_path"].exists():
@@ -551,28 +511,27 @@ def main():
     
     # 加载 progress 数据
     print(f"\n加载数据: {paths['parquet_path']}")
-    progress_data = load_progress_data(paths["parquet_path"], args.camera_keys)
+    progress_data = load_progress_data(paths["parquet_path"], args.value_source)
     print(f"  使用列: {progress_data['column_name']}")
     print(f"  帧数: {len(progress_data['frame_index'])}")
     print(f"  progress_gt 范围: [{progress_data['progress_gt'].min():.4f}, {progress_data['progress_gt'].max():.4f}]")
-    print(f"  VC_value 范围: [{progress_data['progress_predicted'].min():.4f}, {progress_data['progress_predicted'].max():.4f}]")
+    print(f"  数值范围: [{progress_data['progress_predicted'].min():.4f}, {progress_data['progress_predicted'].max():.4f}]")
     
     # 输出目录
     output_dir = Path(args.output_dir) if args.output_dir else dataset_path / "visualizations"
     output_dir.mkdir(parents=True, exist_ok=True)
     
-    # 根据列名生成输出文件后缀
-    column_suffix = progress_data['column_name'].replace('VC_value_', '')
+    key = progress_data['key']
     
     # 生成曲线图
     if not args.no_plot:
-        plot_path = output_dir / f"{episode_id}_VC_value_{column_suffix}.jpg"
+        plot_path = output_dir / f"{episode_id}_{key}.jpg"
         print(f"\n生成曲线图...")
         plot_progress_curve(progress_data, plot_path, episode_id)
     
     # 生成视频
     if not args.no_video:
-        video_output_path = output_dir / f"{episode_id}_VC_value_{column_suffix}.mp4"
+        video_output_path = output_dir / f"{episode_id}_{key}.mp4"
         print(f"\n生成视频...")
         create_side_by_side_video(
             paths["video_path"],
