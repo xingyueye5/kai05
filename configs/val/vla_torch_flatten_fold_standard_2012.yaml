@@ -2,7 +2,7 @@
 # Value head training config for Pika dataset
 
 _target_: TrainConfig
-name: vla_torch_flatten_fold_standard_all_lerobot_2012_baseline
+name: vla_torch_flatten_fold_standard_2012
 
 # Model configuration
 model:
@@ -17,12 +17,7 @@ data:
     - /cpfs01/shared/kai05_data_train/agilex/flatten_fold/short_sleeve/flatten_fold_standard_all_lerobot_2012
   base_config:
     _target_: DataConfig
-    prompt_from_task: false
-  assets:
-    _target_: AssetsConfig
-    assets_dir: /cpfs01/shared/kai05_data_train/agilex/flatten_fold/short_sleeve/
-    asset_id: flatten_fold_standard_all_lerobot_2012
-  default_prompt: "Flatten and fold the short sleeve, advantage: 1"
+    prompt_from_task: true
   # Repack transforms for image/state/action mapping
   repack_transforms:
     _target_: Group

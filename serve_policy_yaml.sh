@@ -13,9 +13,13 @@ nas_root=/mnt/nas/Kai05-VLA
 local_root=/home/lirui/Kai05-VLA
 
 # 从外部传入：模型地址、config 地址，可选端口
-MODEL_PATH=${1}
-CONFIG_PATH=${2}
-PORT=${3:-8001}
+MODEL_PATH=/mnt/nas/Kai05-VLA/checkpoints/vla_torch_flatten_fold_standard_2012_5bins/0226_vla_torch_flatten_fold_standard_2012_5bins/25000
+CONFIG_PATH=/home/lirui/Kai05-VLA/configs/val/vla_torch_flatten_fold_standard_2012_baseline.yaml
+DEFAULT_PROMPT="Flatten and fold the short sleeve"
+# MODEL_PATH=${1}
+# CONFIG_PATH=${2}
+# DEFAULT_PROMPT=${3}
+PORT=${4:-8001}
 
 # 参数检查
 if [ -z "$MODEL_PATH" ] || [ -z "$CONFIG_PATH" ]; then
@@ -29,6 +33,7 @@ echo "========== 配置信息 =========="
 echo "MODEL_PATH: $MODEL_PATH"
 echo "CONFIG_PATH: $CONFIG_PATH"
 echo "PORT: $PORT"
+echo "DEFAULT_PROMPT: $DEFAULT_PROMPT"
 echo "=============================="
 
 # 若模型在 NAS 上，拷贝到本地（保持相对 checkpoints 的路径）
@@ -39,15 +44,17 @@ if [[ "$MODEL_PATH" == "$nas_root"* ]]; then
     if [ ! -d "$local_ckpt" ]; then
         echo "本地 ckpt 不存在，从 NAS 复制: $MODEL_PATH -> $local_ckpt"
         mkdir -p "$(dirname "$local_ckpt")"
-        cp -r "$MODEL_PATH" "$(dirname "$local_ckpt")/"
+        rsync -ah --info=progress2 "$MODEL_PATH/" "$local_ckpt/"
     else
         echo "本地 ckpt 已存在: $local_ckpt"
     fi
     use_ckpt="$local_ckpt"
 fi
 
-uv run scripts/serve_policy_yaml.py \
-    --port="$PORT" \
-    policy:checkpoint \
-    --policy.config_path="$CONFIG_PATH" \
-    --policy.dir="$use_ckpt"
+CMD="uv run scripts/serve_policy_yaml.py --port=$PORT"
+if [ -n "$DEFAULT_PROMPT" ]; then
+    CMD="$CMD --default-prompt=\"$DEFAULT_PROMPT\""
+fi
+CMD="$CMD policy:checkpoint --policy.config_path=$CONFIG_PATH --policy.dir=$use_ckpt"
+
+eval $CMD
