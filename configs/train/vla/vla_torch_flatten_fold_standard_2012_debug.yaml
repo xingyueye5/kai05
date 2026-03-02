@@ -2,7 +2,7 @@
 # Value head training config for Pika dataset
 
 _target_: TrainConfig
-name: vla_torch_flatten_fold_weitiao_1991_baseline
+name: vla_torch_flatten_fold_standard_2012_debug
 
 # Model configuration
 model:
@@ -15,14 +15,10 @@ split: all
 data:
   _target_: LerobotPikaDataConfig
   repo_id: 
-    - /cpfs01/shared/kai05_data_train/agilex/flatten_fold/short_sleeve/flatten_fold_weitiao_1991
+    - /cpfs01/shared/kai05_data_train/agilex/flatten_fold/short_sleeve/flatten_fold_standard_all_lerobot_2012_100bins
   base_config:
     _target_: DataConfig
     prompt_from_task: true
-  assets:
-    _target_: AssetsConfig
-    assets_dir: /cpfs01/shared/kai05_data_train/agilex/flatten_fold/short_sleeve/
-    asset_id: flatten_fold_weitiao_1991
   # Repack transforms for image/state/action mapping
   repack_transforms:
     _target_: Group
@@ -46,9 +42,9 @@ checkpoint_base_dir: /nas/zhaolirui/Kai05-VLA/checkpoints
 
 # Training hyperparameters
 num_train_steps: 100000
-keep_period: 10000
-save_interval: 5000
+keep_period: 10
+save_interval: 5
 
 # Data loading
-num_workers: 32
-batch_size: 128  # For 1 GPU, use 128 for 8 GPUs
+num_workers: 0
+batch_size: 8  # For 1 GPU, use 128 for 8 GPUs

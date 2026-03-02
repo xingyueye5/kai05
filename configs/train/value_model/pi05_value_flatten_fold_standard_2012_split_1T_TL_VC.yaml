@@ -2,7 +2,7 @@
 # Value head training config for Pika dataset
 
 _target_: TrainConfig
-name: pi05_value_flatten_fold_standard_all_lerobot_2012_split_1T_TL_VC
+name: pi05_value_flatten_fold_standard_2012_split_1T_TL_VC
 
 # Model configuration
 model:
@@ -23,10 +23,6 @@ data:
   _target_: LerobotPikaDataConfig
   repo_id: 
     - /cpfs01/shared/kai05_data_train/agilex/flatten_fold/short_sleeve/flatten_fold_standard_all_lerobot_2012_split/split_0_0.1
-  assets:
-    _target_: AssetsConfig
-    assets_dir: /cpfs01/shared/kai05_data_train/agilex/flatten_fold/short_sleeve/flatten_fold_standard_all_lerobot_2012_split/
-    asset_id: split_0_0.1
   base_config:
     _target_: DataConfig
     prompt_from_task: true

@@ -147,7 +147,7 @@ class CustomLeRobotDataset(LeRobotDataset):
         cur_timestamp = item["timestamp"].item()
 
         if self.timestep_difference_mode:
-            random_item = self.handle_timestep_difference_mode(idx, ep_idx, item)
+            random_item = self.handle_timestep_difference_mode(idx, item)
             output_item.update(random_item)
         
         if self.with_episode_start:
@@ -251,7 +251,7 @@ class CustomLeRobotDataset(LeRobotDataset):
 
         return random_item
 
-    def handle_episode_start_frame(self, idx, ep_idx, item, final_item) -> dict:
+    def handle_episode_start_frame(self, idx, ep_idx, item) -> dict:
         start_frame_name = -100
 
         cur_frame_index = item["frame_index"].item()

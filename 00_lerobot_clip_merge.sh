@@ -1,4 +1,6 @@
 #!/bin/bash
+# merge the lerobot data with clip
+# config root path: data_merge_split/config
 set -xe
 set -o pipefail
 

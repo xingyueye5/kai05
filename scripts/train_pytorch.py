@@ -549,10 +549,14 @@ def train_loop(config: _config.TrainConfig):
         else None
     )
 
+    ddp_epoch = 0
     while global_step < config.num_train_steps:
-        # Set epoch for distributed training
-        if use_ddp and hasattr(loader, "set_epoch"):
-            loader.set_epoch(global_step // len(loader))
+        # Set epoch for distributed sampler to ensure proper shuffling across epochs
+        if use_ddp:
+            inner_torch_loader = loader._data_loader._data_loader
+            if hasattr(inner_torch_loader, 'sampler') and hasattr(inner_torch_loader.sampler, 'set_epoch'):
+                inner_torch_loader.sampler.set_epoch(ddp_epoch)
+        ddp_epoch += 1
 
         for observation, actions in loader:
             # Check if we've reached the target number of steps

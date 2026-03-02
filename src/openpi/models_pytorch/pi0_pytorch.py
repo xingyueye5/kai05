@@ -549,15 +549,15 @@ class PI0Pytorch_Custom(PI0Pytorch):
             assert not self.loss_value_use_bce, "Cannot use BCE loss with timestep difference mode, \
                                                 since the output range is [-1, 1] instead of [0, 1]."
 
-        # Value head is a 3-layer MLP that takes the last-layer representation of the suffix tokens and outputs a single value
-        action_expert_config = _gemma.get_config(config.action_expert_variant)
+        # Value head is a 3-layer MLP that takes the last valid prefix token representation (Gemma LM output) and outputs a single value
+        paligemma_config = _gemma.get_config(config.paligemma_variant)
         if self.with_value_head:
             mlp_layers = [
-                nn.Linear(action_expert_config.width, action_expert_config.width),
+                nn.Linear(paligemma_config.width, paligemma_config.width),
                 nn.SiLU(),  # Equivalent to swish activation
-                nn.Linear(action_expert_config.width, action_expert_config.width),
+                nn.Linear(paligemma_config.width, paligemma_config.width),
                 nn.SiLU(),  # Equivalent to swish activation
-                nn.Linear(action_expert_config.width, 1),
+                nn.Linear(paligemma_config.width, 1),
             ]
 
             if self.timestep_difference_mode:
@@ -745,7 +745,6 @@ class PI0Pytorch_Custom(PI0Pytorch):
     def forward(self, observation, actions, noise=None, time=None, return_loss_dict=False) -> tuple[Tensor, dict]:
         """Do a full training forward pass and compute the loss (batch_size x num_steps x num_motors)"""
         # print("observation.action_advantage_original:", observation.action_advantage_original)
-        
         # 处理 future observation 用于 TD learning
         future_obs = None
         if self.TD_learning:
@@ -811,7 +810,7 @@ class PI0Pytorch_Custom(PI0Pytorch):
 
         # Apply gradient checkpointing if enabled
         def forward_func(prefix_embs, suffix_embs, att_2d_masks_4d, position_ids, adarms_cond):
-            (_, suffix_out), _ = self.paligemma_with_expert.forward(
+            (prefix_out, suffix_out), _ = self.paligemma_with_expert.forward(
                 attention_mask=att_2d_masks_4d,
                 position_ids=position_ids,
                 past_key_values=None,
@@ -819,9 +818,9 @@ class PI0Pytorch_Custom(PI0Pytorch):
                 use_cache=False,
                 adarms_cond=[None, adarms_cond],  # * optimizer, gradient.
             )
-            return suffix_out
+            return prefix_out, suffix_out
 
-        suffix_out_full = self._apply_checkpoint(
+        prefix_out_full, suffix_out_full = self._apply_checkpoint(
             forward_func, prefix_embs, suffix_embs, att_2d_masks_4d, position_ids, adarms_cond
         )
 
@@ -843,8 +842,10 @@ class PI0Pytorch_Custom(PI0Pytorch):
         loss_aux_dict = {}
 
         if self.with_value_head:
-            # Get the state token's final representation
-            deep_rep = suffix_out_full[:, 0, :].to(dtype=torch.float32)
+            # Value head input = last valid prefix token (has seen full image+lang context), not mean.
+            last_valid_idx = (prefix_pad_masks.sum(dim=1) - 1).clamp(min=0)  # (B,) 0-based
+            batch_idx = torch.arange(prefix_out_full.shape[0], device=prefix_out_full.device)
+            deep_rep = prefix_out_full[batch_idx, last_valid_idx, :].to(dtype=torch.float32)
             value_pred = self.value_head(deep_rep)  # Shape: (B, 1)
 
             value_loss = torch.zeros(loss.shape[0], 1, device=loss.device)
@@ -852,7 +853,6 @@ class PI0Pytorch_Custom(PI0Pytorch):
             # TD Learning loss
             if self.TD_learning and future_obs is not None:
                 with torch.no_grad():
-                    breakpoint()
                     # 计算 reward 和 done
                     cur_frame_index = obs_full.frame_index.float()
                     episode_length = obs_full.episode_length.float()
@@ -1097,7 +1097,7 @@ class PI0Pytorch_Custom(PI0Pytorch):
         att_2d_masks_4d = self._prepare_attention_masks_4d(att_2d_masks)
 
         # Perform a single, full forward pass without caching
-        (_, suffix_out), _ = self.paligemma_with_expert.forward(
+        (prefix_out, suffix_out), _ = self.paligemma_with_expert.forward(
             attention_mask=att_2d_masks_4d,
             position_ids=position_ids,
             past_key_values=None,
@@ -1106,8 +1106,10 @@ class PI0Pytorch_Custom(PI0Pytorch):
             adarms_cond=[None, adarms_cond],
         )
 
-        # Extract the state token representation and predict the value
-        deep_rep = suffix_out[:, 0, :].to(dtype=torch.float32)
+        # Value head input = last valid prefix token (has seen full image+lang context).
+        last_valid_idx = (prefix_pad_masks.sum(dim=1) - 1).clamp(min=0)
+        batch_idx = torch.arange(prefix_out.shape[0], device=prefix_out.device)
+        deep_rep = prefix_out[batch_idx, last_valid_idx, :].to(dtype=torch.float32)
 
         value_pred = self.value_head(deep_rep)
 

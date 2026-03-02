@@ -1,4 +1,5 @@
 #!/bin/bash
+# just merge the lerobot data
 set -xe
 set -o pipefail
 

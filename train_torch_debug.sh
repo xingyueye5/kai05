@@ -3,7 +3,7 @@
 # config_name=${1}
 # ngpus_per_node=${2}
 
-config_name=/cpfs01/user/zhaolirui/Kai05-VLA/configs/train/vla/flatten_fold_standard_2012/vla_torch_flatten_fold_standard_2012_debug.yaml
+config_name=/cpfs01/user/zhaolirui/Kai05-VLA/configs/train/value_model/debug.yaml
 exp_name=debug
 ngpus_per_node=1
 # export TORCH_ELASTIC_LOG_LEVEL=DEBUG

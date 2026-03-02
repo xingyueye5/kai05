@@ -11,8 +11,22 @@ source_path: # 需要进行合并的文件路径列表
   - /cpfs01/shared/kai05_data/agilex/flatten_fold/short_sleeve/flatten_fold_weitiao/v1_260201_002_night_shift_211_10000_lerobot
   - /cpfs01/shared/kai05_data/agilex/flatten_fold/short_sleeve/flatten_fold_weitiao/v1_260201_001_night_shift_57_10000_lerobot
   - /cpfs01/shared/kai05_data/agilex/flatten_fold/short_sleeve/flatten_fold_weitiao/v1_260130_001_day_shift_261_10000_lerobot
+  - /cpfs01/shared/kai05_data/agilex/flatten_fold/short_sleeve/flatten_fold_xihu/v1_260123_001_day_shift_225_10000_lerobot
+  - /cpfs01/shared/kai05_data/agilex/flatten_fold/short_sleeve/flatten_fold_xihu/v1_260123_001_night_shift_225_10000_lerobot
+  - /cpfs01/shared/kai05_data/agilex/flatten_fold/short_sleeve/flatten_fold_xihu/v1_260125_001_night_shift_227_10000_lerobot
+  - /cpfs01/shared/kai05_data/agilex/flatten_fold/short_sleeve/flatten_fold_xihu/v1_260126_001_night_shift_237_10000_lerobot
+  - /cpfs01/shared/kai05_data/agilex/flatten_fold/short_sleeve/flatten_fold_xihu/v1_260127_001_day_shift_210_10000_lerobot
+  - /cpfs01/shared/kai05_data/agilex/flatten_fold/short_sleeve/flatten_fold_xihu/v1_260127_001_night_shift_231_10000_lerobot
+  - /cpfs01/shared/kai05_data/agilex/flatten_fold/short_sleeve/flatten_fold_xihu/v1_260128_001_day_shift_241_10000_lerobot
+  - /cpfs01/shared/kai05_data/agilex/flatten_fold/short_sleeve/flatten_fold_xihu/v1_260128_001_night_shift_235_10000_lerobot
+  - /cpfs01/shared/kai05_data/agilex/flatten_fold/short_sleeve/flatten_fold_xihu/v1_260129_001_day_shift_171_10000_lerobot
+  - /cpfs01/shared/kai05_data/agilex/flatten_fold/short_sleeve/flatten_fold_standard/v1_260120_001_day_shift_395_10000_lerobot
+  - /cpfs01/shared/kai05_data/agilex/flatten_fold/short_sleeve/flatten_fold_standard/v1_260120_001_night_shift_400_10000_lerobot
+  - /cpfs01/shared/kai05_data/agilex/flatten_fold/short_sleeve/flatten_fold_standard/v1_260121_001_day_shift_406_10000_lerobot
+  - /cpfs01/shared/kai05_data/agilex/flatten_fold/short_sleeve/flatten_fold_standard/v1_260121_001_night_shift_406_10000_lerobot
+  - /cpfs01/shared/kai05_data/agilex/flatten_fold/short_sleeve/flatten_fold_standard/v1_260122_001_day_shift_406_10000_lerobot
 # 合并后数据保存路径
-dst_path: /cpfs01/shared/kai05_data_train/agilex/flatten_fold/short_sleeve/flatten_fold_weitiao
+dst_path: /cpfs01/shared/kai05_data_train/agilex/flatten_fold/short_sleeve/flatten_fold_3sop_v1
 tasks:  
 combine_task:
 # 任务描述，若无，留空
