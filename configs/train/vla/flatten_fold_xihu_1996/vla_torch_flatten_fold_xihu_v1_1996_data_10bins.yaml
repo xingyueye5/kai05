@@ -2,7 +2,7 @@
 # Value head training config for Pika dataset
 
 _target_: TrainConfig
-name: vla_torch_flatten_fold_standard_2012_10bins
+name: vla_torch_flatten_fold_xihu_v1_1996_data_10bins
 
 # Model configuration
 model:
@@ -15,7 +15,7 @@ split: all
 data:
   _target_: LerobotPikaDataConfig
   repo_id: 
-    - /cpfs01/shared/kai05_data_train/agilex/flatten_fold/short_sleeve/flatten_fold_standard_all_lerobot_2012_10bins
+    - /cpfs01/shared/kai05_data_train/agilex/flatten_fold/short_sleeve/flatten_fold_xihu_v1_1996_data_10bins
   base_config:
     _target_: DataConfig
     prompt_from_task: true

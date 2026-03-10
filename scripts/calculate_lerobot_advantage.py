@@ -164,7 +164,15 @@ def update_tasks_jsonl(tasks_path: Path, advantage_type: str) -> int:
 
     task_desc = re.sub(r'[^\w\s]+$', '', task_desc)  # 去掉末尾所有标点符号
     
-    if advantage_type == "binary":
+    if advantage_type == "all_positive":
+        # 全正: 只有 1 个 task，advantage 为 1
+        with open(tasks_jsonl_path, 'w') as f:
+            f.write(json.dumps({
+                'task_index': 0,
+                'task': f'{task_desc}, advantage: 1',
+            }) + '\n')
+        return 1
+    elif advantage_type == "binary":
         # 二分类: 0.5 和 1
         with open(tasks_jsonl_path, 'w') as f:
             f.write(json.dumps({
@@ -311,6 +319,14 @@ def update_all_advantage(
     need_rename = parquet_path != output_parquet_path
     
     print(f"[INFO] Advantage type: {advantage_type}")
+    
+    if advantage_type == "all_positive":
+        # all_positive 模式：只修改 meta，不动 parquet
+        total_tasks = update_tasks_jsonl(repo_id / 'meta', advantage_type=advantage_type)
+        update_info_json(repo_id / 'meta', total_tasks=total_tasks)
+        print(f"[INFO] all_positive mode: updated tasks.jsonl and info.json only (total_tasks={total_tasks})")
+        return
+    
     print(f"[INFO] Reading from: {repo_id / parquet_path}")
     if need_rename:
         print(f"[INFO] Will rename folder to: {repo_id / output_parquet_path}")

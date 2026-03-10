@@ -7,7 +7,7 @@ set -o pipefail
 # ============================================================
 
 # 原始数据集路径
-ORIGINAL_REPO_ID=/cpfs01/shared/kai05_data_train/agilex/flatten_fold/short_sleeve/flatten_fold_xihu_1996
+ORIGINAL_REPO_ID=/cpfs01/shared/kai05_data_train/agilex/flatten_fold/short_sleeve/flatten_fold_weitiao_huifu1_1795
 # 自动生成训练数据集路径（kai05_data -> kai05_data_train，如果已经是 kai05_data_train 则不变）
 if [[ "$ORIGINAL_REPO_ID" == *"kai05_data_train"* ]]; then
     # 已经是 kai05_data_train，不做替换
@@ -20,9 +20,10 @@ fi
 # ---------- 模式配置 ----------
 # ADVANTAGE_TYPES 支持多个值，用逗号分隔:
 #   - "binary"       : 二分类 (negative/positive)
+#   - "all_positive" : 所有数据都设置为 positive
 #   - "<N>bins"      : N分类，如 "10bins", "5bins"
 # 示例: "binary,5bins,10bins,100bins"
-ADVANTAGE_TYPES="binary,5bins,10bins"
+ADVANTAGE_TYPES="binary,all_positive,5bins,10bins"
 
 # ---------- 比例配置 (仅 binary 模式生效) ----------
 # POSITIVE_RATE: positive 的比例 (百分比)，如 30 表示 top 30% 为 positive
@@ -40,7 +41,10 @@ ADVANTAGE_SOURCE="VC_value_top_head"
 validate_single_type() {
     local adv_type="$1"
     # 验证单个 ADVANTAGE_TYPE 格式
-    if [[ "$adv_type" == "binary" ]]; then
+    if [[ "$adv_type" == "all_positive" ]]; then
+        # all_positive 模式：无需额外验证
+        :
+    elif [[ "$adv_type" == "binary" ]]; then
         # binary 模式：验证 POSITIVE_RATE
         if ! [[ "$POSITIVE_RATE" =~ ^[0-9]+$ ]] || [ "$POSITIVE_RATE" -lt 1 ] || [ "$POSITIVE_RATE" -gt 99 ]; then
             echo "错误: POSITIVE_RATE 必须是 1-99 之间的整数"
@@ -56,7 +60,7 @@ validate_single_type() {
             return 1
         fi
     else
-        echo "错误: ADVANTAGE_TYPE 必须是 'binary' 或 '<N>bins' (如 '10bins')"
+        echo "错误: ADVANTAGE_TYPE 必须是 'all_positive', 'binary' 或 '<N>bins' (如 '10bins')"
         echo "当前值: $adv_type"
         return 1
     fi
@@ -88,6 +92,8 @@ generate_suffix() {
     if [[ "$adv_type" == "binary" ]]; then
         # binary 模式：后缀包含比例信息
         echo "binary_p${POSITIVE_RATE}"
+    elif [[ "$adv_type" == "all_positive" ]]; then
+        echo "all_positive"
     else
         # bins 模式：直接使用 bins 数量
         echo "$adv_type"

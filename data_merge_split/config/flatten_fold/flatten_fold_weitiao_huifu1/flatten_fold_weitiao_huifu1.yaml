@@ -1,0 +1,19 @@
+source_path: # 需要进行合并的文件路径列表
+ - /cpfs01/shared/kai05_data/agilex/flatten_fold/short_sleeve/flatten_fold_weitiao_huifu1/v1_260302_004_day_shift_300_10000_lerobot
+ - /cpfs01/shared/kai05_data/agilex/flatten_fold/short_sleeve/flatten_fold_weitiao_huifu1/v2_260302_003_day_shift_300_10000_lerobot
+ - /cpfs01/shared/kai05_data/agilex/flatten_fold/short_sleeve/flatten_fold_weitiao_huifu1/v3_260302_002_day_shift_300_10000_lerobot
+ - /cpfs01/shared/kai05_data/agilex/flatten_fold/short_sleeve/flatten_fold_weitiao_huifu1/v4_260303_002_day_shift_300_10000_lerobot
+ - /cpfs01/shared/kai05_data/agilex/flatten_fold/short_sleeve/flatten_fold_weitiao_huifu1/v5_260303_003_day_shift_300_10000_lerobot
+ - /cpfs01/shared/kai05_data/agilex/flatten_fold/short_sleeve/flatten_fold_weitiao_huifu1/v6_260303_004_day_shift_299_10000_lerobot
+# 合并后数据保存路径
+dst_path: /cpfs01/shared/kai05_data_train/agilex/flatten_fold/short_sleeve/flatten_fold_weitiao_huifu1
+tasks:  
+combine_task:
+# 任务描述，若无，留空
+task_description:
+save_method: cv # 视频保存方法，cv或av
+
+# 处理进程数,处理视频部分进程数目，实际进程数为process_count + 3，
+# 多出的三个进程，分别为data_parquet_processor、episode_stats_processor和log进程
+# 如果为None，则使用cpu数；如果非空，则使用给定进程数
+process_count: null

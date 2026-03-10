@@ -5,7 +5,7 @@ source_path: # 需要进行合并的文件路径列表
   - /cpfs01/shared/kai05_data/agilex/flatten_fold/short_sleeve/flatten_fold_standard/v1_260121_001_night_shift_406_10000_lerobot
   - /cpfs01/shared/kai05_data/agilex/flatten_fold/short_sleeve/flatten_fold_standard/v1_260122_001_day_shift_406_10000_lerobot
 # 合并后数据保存路径
-dst_path: /cpfs01/shared/kai05_data_train/agilex/flatten_fold/short_sleeve/flatten_fold_standard_all_lerobot
+dst_path: /cpfs01/shared/kai05_data_train/agilex/flatten_fold/short_sleeve/flatten_fold_standard
 tasks:  
 combine_task:
 # 任务描述，若无，留空
