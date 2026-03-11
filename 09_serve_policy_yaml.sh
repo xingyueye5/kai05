@@ -13,12 +13,12 @@ nas_root=/mnt/nas/Kai05-VLA
 local_root=/home/lirui/Kai05-VLA
 
 # 从外部传入：模型地址、config 地址，可选端口
-MODEL_PATH=/mnt/nas/Kai05-VLA/checkpoints/vla_torch_flatten_fold_standard_2012_5bins/0226_vla_torch_flatten_fold_standard_2012_5bins/25000
-CONFIG_PATH=/home/lirui/Kai05-VLA/configs/val/vla_torch_flatten_fold_standard_2012_baseline.yaml
-DEFAULT_PROMPT="Flatten and fold the short sleeve"
-# MODEL_PATH=${1}
-# CONFIG_PATH=${2}
-# DEFAULT_PROMPT=${3}
+# MODEL_PATH=/mnt/nas/Kai05-VLA/checkpoints/vla_torch_flatten_fold_standard_2012_5bins/0226_vla_torch_flatten_fold_standard_2012_5bins/25000
+# CONFIG_PATH=/home/lirui/Kai05-VLA/configs/val/vla_torch_flatten_fold_standard_2012_baseline.yaml
+# DEFAULT_PROMPT="Flatten and fold the short sleeve"
+MODEL_PATH=${1}
+CONFIG_PATH=${2}
+DEFAULT_PROMPT=${3}
 PORT=${4:-8001}
 
 # 参数检查
