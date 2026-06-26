@@ -87,13 +87,13 @@ Three contributions, each filling a precise gap left by prior work
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
 │ Stage 0 ─ Data prep                                                 │
-│   00_lerobot_*.sh    →  LeRobot dataset (existing pipeline)         │
+│   pipeline/data_prep/00_lerobot_*.sh                                │
 └─────────────────────────────────────────────────────────────────────┘
                             │
                             ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │ Stage 1 ─ Feature extraction (unchanged from upstream)              │
-│   01_extract_features.sh                                            │
+│   pipeline/data_prep/01_extract_features.sh                         │
 │   scripts/extract_siglip_features.py + merge_siglip_features.py     │
 └─────────────────────────────────────────────────────────────────────┘
                             │
@@ -165,7 +165,7 @@ Expected output:
 ### 3.2 End-to-end on a real LeRobot dataset
 
 Prerequisite: SigLIP2 features already extracted via the existing pipeline
-(`01_extract_features.sh` + `merge_siglip_features.py`), so the file
+(`pipeline/data_prep/01_extract_features.sh` + `merge_siglip_features.py`), so the file
 `<DATASET>/features/features_merged_<camera>.pt` exists.
 
 ```bash
@@ -219,9 +219,13 @@ bash 09_serve_policy.sh
 Kai05-VLA/
 ├── README.md                              ← this file
 ├── pyproject.toml                         ← upstream (Python ≥ 3.11, uv)
-├── 00_lerobot_*.sh / 01_extract_features.sh / …   ← upstream pipeline drivers
-├── 03_calculate_lerobot_advantage.sh      ← downstream of FreeVAC, unchanged
-├── 08_train_torch_*.sh / 09_serve_policy*.sh
+├── 03_calculate_lerobot_advantage.sh      ← FreeVAC consumer (root, high-frequency)
+├── 08_train_torch_*.sh / 09_serve_policy*.sh  ← train / serve drivers (root, high-frequency)
+│
+├── pipeline/                              ← lower-frequency shell drivers
+│   ├── data_prep/    00_lerobot_*.sh, 01_extract_features.sh, 01_compute_norm_stats.sh, …
+│   ├── value/        02_calculate_VC_value.sh (paper baseline), 04_inference_lerobot_value.sh
+│   └── utils/        08-1_plot_actions.sh, clean_progress_predicted.sh
 │
 ├── docs/
 │   ├── new paper.md                       ★ paper narrative + experimental plan

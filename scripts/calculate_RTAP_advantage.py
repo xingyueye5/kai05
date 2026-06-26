@@ -150,29 +150,18 @@ def compute_rtap_multi_anchor(
 
 
 # ----------------------------------------------------------------------------
-# IO
+# IO  (delegates to scripts/_freevac_common.py to share with FlowVar / Fusion)
 # ----------------------------------------------------------------------------
 
+from _freevac_common import (
+    load_merged_features as _load_merged_features,
+    write_per_episode_column as _write_per_episode_column,
+)
+
+
 def load_features(source_path: Path, camera_keys: list[str]) -> dict:
-    """
-    复用 calculate_VC_value.py 中的相同协议：
-        features 跨相机沿 dim=1 concat（每相机有一个独立 D 维表征）
-    """
-    feats_per_cam = []
-    meta = None
-    for camera_key in camera_keys:
-        fp = source_path / "features" / f"features_merged_{camera_key}.pt"
-        d = torch.load(fp, map_location="cpu", weights_only=False)
-        feats_per_cam.append(d["features"])
-        if meta is None:
-            meta = {
-                "video_ids":     d["video_ids"],
-                "frame_indices": d["frame_indices"],
-                "progress_gt":   d["progress_gt"],
-                "video_names":   d["video_names"],
-            }
-    features = torch.cat(feats_per_cam, dim=1)
-    return {"features": features, **meta}
+    """Backward-compat thin wrapper over `_freevac_common.load_merged_features`."""
+    return _load_merged_features(source_path, camera_keys)
 
 
 def write_back_to_parquet(
@@ -182,25 +171,11 @@ def write_back_to_parquet(
     column_name: str,
     chunk_size: int = 1000,
 ) -> None:
-    """把每个 episode 的 progress 数组写回对应 parquet 文件的 column_name 列。"""
-    data_root = source_path / "data"
-    progress_np = progress.cpu().numpy()
-    video_ids_np = video_ids.cpu().numpy()
-    unique_eps = sorted(set(video_ids_np.tolist()))
-
-    for ep in tqdm(unique_eps, desc=f"Writing {column_name}"):
-        mask = video_ids_np == ep
-        ep_progress = progress_np[mask]
-        parquet_path = data_root / f"chunk-{ep // chunk_size:03d}" / f"episode_{ep:06d}.parquet"
-        if not parquet_path.exists():
-            print(f"  [WARN] parquet not found: {parquet_path}, skip")
-            continue
-        df = pd.read_parquet(parquet_path)
-        if len(df) != len(ep_progress):
-            print(f"  [WARN] length mismatch for ep {ep}: parquet={len(df)} vs rtap={len(ep_progress)}, skip")
-            continue
-        df[column_name] = ep_progress
-        df.to_parquet(parquet_path, index=False)
+    """Backward-compat thin wrapper over `_freevac_common.write_per_episode_column`."""
+    _write_per_episode_column(
+        progress, video_ids, source_path,
+        column_name=column_name, chunk_size=chunk_size,
+    )
 
 
 # ----------------------------------------------------------------------------

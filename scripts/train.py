@@ -1,3 +1,14 @@
+"""
+DEPRECATED — JAX trainer entrypoint.
+
+This file is the original JAX-based trainer from upstream openpi. The active
+trainer for kai05-VLA / FreeVAC is `scripts/train_pytorch.py` (PyTorch + DDP),
+launched via `08_train_torch_ali.sh` / `08_train_torch_debug.sh`.
+
+This file is kept only for the upstream DROID workflow referenced in
+`examples/droid/README_train.md`. **Do not extend it for new features.**
+"""
+
 import dataclasses
 import functools
 import logging

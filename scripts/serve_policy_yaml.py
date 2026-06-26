@@ -2,6 +2,8 @@ import dataclasses
 import enum
 import logging
 import socket
+import sys
+from pathlib import Path
 
 import tyro
 
@@ -10,6 +12,10 @@ from openpi.policies import policy_config as _policy_config
 from openpi.serving import websocket_policy_server
 from openpi.training import config as _config
 from openpi.training import config_loader
+
+# Local helper that unifies "config name" vs "yaml path" loading.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _config_resolver import resolve_train_config  # noqa: E402
 
 
 class EnvMode(enum.Enum):
@@ -81,7 +87,7 @@ DEFAULT_CHECKPOINT: dict[EnvMode, Checkpoint] = {
 def create_default_policy(env: EnvMode, *, default_prompt: str | None = None) -> _policy.Policy:
     """Create a default policy for the given environment."""
     if checkpoint := DEFAULT_CHECKPOINT.get(env):
-        config = config_loader.load_config(checkpoint.config_path)
+        config = resolve_train_config(checkpoint.config_path)
         return _policy_config.create_trained_policy(
             config, checkpoint.dir, default_prompt=default_prompt
         )
@@ -92,7 +98,7 @@ def create_policy(args: Args) -> _policy.Policy:
     """Create a policy from the given arguments."""
     match args.policy:
         case Checkpoint():
-            config = config_loader.load_config(args.policy.config_path)
+            config = resolve_train_config(args.policy.config_path)
             return _policy_config.create_trained_policy(
                 config, args.policy.dir, default_prompt=args.default_prompt
             )

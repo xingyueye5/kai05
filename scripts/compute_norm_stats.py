@@ -1,4 +1,18 @@
-"""Compute normalization statistics for a config.
+"""
+DEPRECATED — slow JAX-loop normalization stats computation.
+
+For kai05-VLA / FreeVAC use the faster vectorized version:
+    `scripts/compute_norm_stats_fast.py`
+which is the entrypoint wired into `01_compute_norm_stats.sh` and the
+`08_train_torch_ali.sh` workflow.
+
+This file is kept only for the upstream DROID workflow referenced in
+`examples/droid/README_train.md` and the `data_loader.py` error message.
+**Do not extend it for new features.**
+
+----- Original docstring below -----
+
+Compute normalization statistics for a config.
 
 This script is used to compute the normalization statistics for a given config. It
 will compute the mean and standard deviation of the data in the dataset and save it

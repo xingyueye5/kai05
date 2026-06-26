@@ -27,6 +27,12 @@ import openpi.models.tokenizer as _tokenizer
 from types import SimpleNamespace
 from openpi.shared import image_tools
 
+# Local helper that unifies "config name" vs "yaml path" loading.
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _config_resolver import resolve_train_config  # noqa: E402
+
 class SimpleValueEvaluator:
     """简化的评估类，只进行推理并返回结果列表，不保存任何文件"""
     
@@ -69,7 +75,7 @@ class SimpleValueEvaluator:
     def _load_model(self):
         """加载模型和配置"""
         # 加载配置
-        self.config = _config.get_config(self.config_name)
+        self.config = resolve_train_config(self.config_name)
         checkpoint_dir = download.maybe_download(self.ckpt_dir)
         
         # 创建模型
